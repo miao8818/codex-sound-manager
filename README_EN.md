@@ -66,7 +66,8 @@ You can also double-click `Run-Portable.vbs` in the same directory. In a source 
 - Left-click the tray icon to restore the main window. Its context menu can switch the sound, show or hide the floating control, or quit the app.
 - Enable **Desktop floating control** in the main window, then short-click the orb to switch completion sounds instantly. Hold and drag from any point on the orb to move it, or right-click it to open the main window.
 - Moving beyond the drag threshold never toggles the sound by mistake, and the window area outside the orb remains transparent.
-- Floating-control visibility and quick sound changes are saved immediately; selecting **Apply to Codex** again is not required.
+- Sound switches in the main window, floating control, and tray are saved immediately and take effect on the next completed task; **Apply to Codex** and a Codex restart are not required.
+- Repeat-count and sound-file changes still require one click on **Apply to Codex**. If the global callback is already configured, those settings do not require a Codex restart either.
 
 ## Run from Source
 
@@ -104,8 +105,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.1_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.1_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.2_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.2_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.

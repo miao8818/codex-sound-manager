@@ -90,7 +90,7 @@ export default function App() {
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [settings, setSettings] = useState<AppSettings>(emptySettings)
   const [soundName, setSoundName] = useState('内置默认提示音')
-  const [busy, setBusy] = useState<'scan' | 'preview' | 'apply' | 'remove' | 'sound' | 'floating' | 'close' | null>('scan')
+  const [busy, setBusy] = useState<'scan' | 'preview' | 'apply' | 'remove' | 'sound' | 'enabled' | 'floating' | 'close' | null>('scan')
   const [notice, setNotice] = useState<Notice | null>(null)
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
 
@@ -175,6 +175,28 @@ export default function App() {
   const resetSound = () => {
     setSettings((current) => ({ ...current, soundPath: null, soundName: null }))
     setSoundName('内置默认提示音')
+  }
+
+  const updateSoundEnabled = async (enabled: boolean) => {
+    const previous = settings.enabled
+    setSettings((current) => ({ ...current, enabled }))
+    setBusy('enabled')
+    setNotice(null)
+    try {
+      const soundEnabled = await invoke<boolean>('set_sound_enabled', { enabled })
+      setSettings((current) => ({ ...current, enabled: soundEnabled }))
+      setNotice({
+        tone: 'success',
+        message: soundEnabled
+          ? '提示音已开启，下一次任务完成立即生效'
+          : '提示音已关闭，下一次任务完成不会播放',
+      })
+    } catch (error) {
+      setSettings((current) => ({ ...current, enabled: previous }))
+      setNotice({ tone: 'error', message: errorMessage(error) })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const updateFloatingBall = async (enabled: boolean) => {
@@ -312,7 +334,7 @@ export default function App() {
               </div>
               <Switch
                 checked={settings.enabled}
-                onCheckedChange={(enabled) => setSettings((current) => ({ ...current, enabled }))}
+                onCheckedChange={(enabled) => void updateSoundEnabled(enabled)}
                 disabled={disabled}
                 aria-label="启用任务完成提示音"
               />

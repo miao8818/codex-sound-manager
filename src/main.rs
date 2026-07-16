@@ -512,6 +512,15 @@ fn command_contains_manager(command: &[String]) -> bool {
         .unwrap_or(false)
 }
 
+fn command_uses_exact_manager(command: &[String], manager_command: &[String]) -> bool {
+    if command == manager_command {
+        return true;
+    }
+    nested_previous_notifier(command)
+        .map(|(_, nested)| nested == manager_command)
+        .unwrap_or(false)
+}
+
 fn install_notify(
     document: &mut DocumentMut,
     manager_command: &[String],
@@ -681,6 +690,14 @@ fn runtime_preferences(settings: &AppSettings) -> RuntimePreferences {
     }
 }
 
+fn apply_configuration_message(already_configured: bool) -> &'static str {
+    if already_configured {
+        "设置已保存，下一次任务完成立即生效，无需重启 Codex"
+    } else {
+        "已写入 Codex 全局配置，请完整重启 Codex"
+    }
+}
+
 fn update_tray_tooltip(app: &AppHandle, settings: &AppSettings) {
     if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
         let sound_status = if settings.enabled {
@@ -766,12 +783,25 @@ fn position_floating_ball(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("定位桌面悬浮球失败：{error}"))
 }
 
-fn toggle_sound_enabled_internal(app: &AppHandle) -> Result<bool, String> {
-    let mut settings = load_settings()?;
-    settings.enabled = !settings.enabled;
+fn persist_sound_enabled(
+    app: &AppHandle,
+    mut settings: AppSettings,
+    enabled: bool,
+) -> Result<bool, String> {
+    settings.enabled = enabled;
     save_settings(&settings)?;
     emit_sound_enabled(app, &settings)?;
     Ok(settings.enabled)
+}
+
+fn set_sound_enabled_internal(app: &AppHandle, enabled: bool) -> Result<bool, String> {
+    persist_sound_enabled(app, load_settings()?, enabled)
+}
+
+fn toggle_sound_enabled_internal(app: &AppHandle) -> Result<bool, String> {
+    let settings = load_settings()?;
+    let enabled = !settings.enabled;
+    persist_sound_enabled(app, settings, enabled)
 }
 
 fn set_floating_ball_enabled_internal(app: &AppHandle, enabled: bool) -> Result<bool, String> {
@@ -846,6 +876,11 @@ fn get_runtime_preferences() -> Result<RuntimePreferences, String> {
 #[tauri::command]
 fn toggle_sound_enabled(app: AppHandle) -> Result<bool, String> {
     toggle_sound_enabled_internal(&app)
+}
+
+#[tauri::command]
+fn set_sound_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    set_sound_enabled_internal(&app, enabled)
 }
 
 #[tauri::command]
@@ -994,6 +1029,9 @@ fn apply_configuration(
     let config_path = codex_home.join("config.toml");
     let mut document = parse_config(&config_path)?;
     let manager_command = current_manager_command()?;
+    let callback_unchanged = notify_command(&document)
+        .map(|command| command_uses_exact_manager(&command, &manager_command))
+        .unwrap_or(false);
     install_notify(&mut document, &manager_command, &mut settings)?;
     settings.codex_home = Some(codex_home.to_string_lossy().to_string());
     save_settings(&settings)?;
@@ -1002,7 +1040,7 @@ fn apply_configuration(
     emit_sound_enabled(&app, &settings)?;
     emit_floating_ball_enabled(&app, &settings)?;
     Ok(OperationResult {
-        message: "已写入 Codex 全局配置，请完整重启 Codex".to_string(),
+        message: apply_configuration_message(callback_unchanged).to_string(),
         scan: scan_internal(settings)?,
     })
 }
@@ -1250,6 +1288,7 @@ fn main() {
             preview_sound,
             get_runtime_preferences,
             toggle_sound_enabled,
+            set_sound_enabled,
             set_floating_ball_enabled,
             show_main_window,
             begin_floating_drag,
@@ -1324,6 +1363,24 @@ notify = ["notify-send", "Codex"]
     }
 
     #[test]
+    fn detects_when_the_configured_manager_command_is_unchanged() {
+        let manager = manager_command();
+        assert!(command_uses_exact_manager(&manager, &manager));
+
+        let wrapped = vec![
+            r"C:\Codex\codex-computer-use.exe".to_string(),
+            "turn-ended".to_string(),
+            "--previous-notify".to_string(),
+            serde_json::to_string(&manager).unwrap(),
+        ];
+        assert!(command_uses_exact_manager(&wrapped, &manager));
+
+        let mut moved_manager = manager.clone();
+        moved_manager[0] = r"D:\Different\codex-sound-manager.exe".to_string();
+        assert!(!command_uses_exact_manager(&moved_manager, &manager));
+    }
+
+    #[test]
     fn ignores_legacy_personal_sound_script() {
         let mut document = r#"notify = ["powershell.exe", "-File", "C:\\Users\\demo\\.codex\\bin\\task-complete.ps1"]
 "#
@@ -1393,6 +1450,18 @@ notify = ["notify-send", "Codex"]
         let preferences = runtime_preferences(&settings);
         assert!(!preferences.sound_enabled);
         assert!(preferences.floating_ball_enabled);
+    }
+
+    #[test]
+    fn explains_when_codex_restart_is_required() {
+        assert_eq!(
+            apply_configuration_message(true),
+            "设置已保存，下一次任务完成立即生效，无需重启 Codex"
+        );
+        assert_eq!(
+            apply_configuration_message(false),
+            "已写入 Codex 全局配置，请完整重启 Codex"
+        );
     }
 
     #[test]
