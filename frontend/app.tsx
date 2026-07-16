@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   FileAudio,
   FolderOpen,
+  MessageCircle,
   Minus,
   Play,
   Plus,
@@ -14,9 +15,13 @@ import {
   Save,
   ShieldCheck,
   Volume2,
+  X,
   XCircle,
 } from 'lucide-react'
+import packageInfo from '../package.json'
+import communityQr from '../docs/images/community-qr.jpg'
 import { Button } from './components/ui/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from './components/ui/dialog'
 import { Switch } from './components/ui/switch'
 import { Tooltip } from './components/ui/tooltip'
 import { cn } from './lib/utils'
@@ -25,6 +30,7 @@ type AppSettings = {
   enabled: boolean
   playCount: number
   soundPath: string | null
+  soundName: string | null
   previousNotifier: string[] | null
   codexHome: string | null
 }
@@ -61,6 +67,7 @@ const emptySettings: AppSettings = {
   enabled: true,
   playCount: 2,
   soundPath: null,
+  soundName: null,
   previousNotifier: null,
   codexHome: null,
 }
@@ -115,7 +122,7 @@ export default function App() {
     try {
       const selected = await invoke<SoundSelection | null>('choose_sound')
       if (selected) {
-        setSettings((current) => ({ ...current, soundPath: selected.path }))
+        setSettings((current) => ({ ...current, soundPath: selected.path, soundName: selected.name }))
         setSoundName(selected.name)
       }
     } catch (error) {
@@ -126,7 +133,7 @@ export default function App() {
   }
 
   const resetSound = () => {
-    setSettings((current) => ({ ...current, soundPath: null }))
+    setSettings((current) => ({ ...current, soundPath: null, soundName: null }))
     setSoundName('内置默认提示音')
   }
 
@@ -236,6 +243,7 @@ export default function App() {
             <Switch
               checked={settings.enabled}
               onCheckedChange={(enabled) => setSettings((current) => ({ ...current, enabled }))}
+              disabled={disabled}
               aria-label="启用任务完成提示音"
             />
           </div>
@@ -252,7 +260,7 @@ export default function App() {
                   size="icon"
                   className="rounded-none border-r border-border"
                   onClick={() => updateCount(-1)}
-                  disabled={settings.playCount <= 1}
+                  disabled={disabled || settings.playCount <= 1}
                   aria-label="减少播放次数"
                 >
                   <Minus className="size-4" />
@@ -267,7 +275,7 @@ export default function App() {
                   size="icon"
                   className="rounded-none border-l border-border"
                   onClick={() => updateCount(1)}
-                  disabled={settings.playCount >= 10}
+                  disabled={disabled || settings.playCount >= 10}
                   aria-label="增加播放次数"
                 >
                   <Plus className="size-4" />
@@ -328,7 +336,35 @@ export default function App() {
 
         <footer className="flex items-center justify-between px-1 pt-4 text-[11px] text-muted-foreground">
           <span>Codex Sound Manager</span>
-          <span>v1.0.0</span>
+          <div className="flex items-center gap-2">
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] font-medium">
+                  <MessageCircle className="size-3.5" aria-hidden="true" />
+                  联系开发者
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <DialogTitle>联系开发者</DialogTitle>
+                    <DialogDescription className="mt-1">扫码加入交流群，反馈问题或交流使用经验</DialogDescription>
+                  </div>
+                  <DialogClose asChild>
+                    <Button variant="ghost" size="icon" className="-mr-2 -mt-2" aria-label="关闭联系开发者窗口">
+                      <X className="size-4" aria-hidden="true" />
+                    </Button>
+                  </DialogClose>
+                </div>
+                <img
+                  src={communityQr}
+                  alt="Codex 提示音管理器交流群二维码"
+                  className="mx-auto mt-4 aspect-square w-[300px] max-w-full border border-border bg-white object-contain"
+                />
+              </DialogContent>
+            </Dialog>
+            <span>v{packageInfo.version}</span>
+          </div>
         </footer>
       </main>
 

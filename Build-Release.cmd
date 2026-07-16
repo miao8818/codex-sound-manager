@@ -10,6 +10,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Build completed: target\release\bundle\nsis
+echo Installer: target\release\bundle\release
+echo Portable:  target\release\bundle\portable
 pause
 endlocal

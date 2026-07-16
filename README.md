@@ -12,6 +12,14 @@
   </p>
 </div>
 
+## 交流群
+
+扫码加入交流群，联系开发者、反馈问题或交流 Codex 使用经验：
+
+<p align="center">
+  <img src="docs/images/community-qr.jpg" width="320" alt="Codex 提示音管理器交流群二维码" />
+</p>
+
 ![应用界面](docs/images/app-screenshot.png)
 
 ## 功能亮点
@@ -20,12 +28,13 @@
 |---|---|
 | 自动发现 Codex | 扫描 `CODEX_HOME` 和当前用户的 `~/.codex` |
 | 全局生效 | 一套设置覆盖当前 Windows 用户的所有 Codex 对话和项目 |
-| 自定义声音 | 支持 WAV、MP3、FLAC、OGG、M4A、AAC，最大 50 MB |
+| 自定义声音 | 支持 WAV、MP3、FLAC、OGG、M4A、AAC，最大 50 MB，选择器默认打开声音库 |
 | 播放次数 | 每次任务完成可连续播放 1–10 次 |
 | 原创默认音频 | `sounds/default-notification.wav` 随项目公开分发 |
 | 安全修改配置 | 使用 `toml_edit` 保留原 TOML 的注释、顺序和其他字段 |
 | 保留已有回调 | 兼容 Codex Computer Use 的 `--previous-notify` 包装 |
 | 可随时恢复 | 移除工具配置时恢复安装前的原通知回调 |
+| 联系开发者 | 点击窗口底部的小按钮即可查看交流群二维码 |
 | 安静运行 | Release 和通知模式不显示黑色控制台窗口 |
 
 ## 下载与使用
@@ -82,15 +91,16 @@ Build-Release.cmd
 .\scripts\Build-Release.ps1
 ```
 
-脚本会依次生成图标和默认声音、安装前端依赖、执行 TypeScript 检查、Rust 单元测试、Clippy 检查并构建 Tauri Release。
+脚本会先校验所有版本号一致，再安装前端依赖、生成并同步 Tauri 图标、执行 TypeScript 检查、Rust 单元测试、Clippy 检查并构建 Tauri Release。
 
 构建产物：
 
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.0.0_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.0.0_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.1.0_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.1.0_x64-portable.zip` |
+| SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。
 
@@ -104,20 +114,22 @@ sounds\default-notification.wav
 
 该音频由 `scripts/generate_default_sound.py` 原创生成，峰值约为 `-1.1 dBFS`，可随 MIT 许可公开分发。
 
-用户选择自定义音频后，程序会复制一份到：
+用户选择自定义音频时，文件选择器会默认打开下面的声音库；选中的文件也会复制到这里：
 
 ```text
-%LOCALAPPDATA%\CodexSoundManager\sounds\
+~\.codex\codex-sound-manager\sounds\
 ```
 
 点击界面中的 **恢复默认** 即可重新使用项目内置声音。
+
+`v1.1.0` 会自动迁移旧版 `%LOCALAPPDATA%\CodexSoundManager` 以及 Codex 包目录中的设置和自定义音频，避免不同启动方式读取到两份设置。
 
 ## 配置与隐私
 
 - Codex 设置：`%CODEX_HOME%\config.toml`
 - 首次配置备份：`%CODEX_HOME%\config.toml.codex-sound-manager.bak`
-- 工具设置：`%LOCALAPPDATA%\CodexSoundManager\settings.json`
-- UTF-8 运行日志：`%LOCALAPPDATA%\CodexSoundManager\notifier.log`
+- 工具设置：`~\.codex\codex-sound-manager\settings.json`
+- UTF-8 运行日志：`~\.codex\codex-sound-manager\notifier.log`
 
 程序不会上传 Codex 配置、自定义音频或日志，也不会读取对话内容。Codex 传入的任务结束参数只用于继续转发已有通知回调。
 
@@ -158,18 +170,11 @@ CodexSoundManager/
 ├─ assets/               Noto Sans CJK SC 字体
 ├─ docs/images/          截图与交流群二维码
 ├─ scripts/              图标、声音和发布脚本
+├─ AGENTS.md             版本、编码与交付维护规则
 ├─ Start-Dev.cmd         一键开发启动
 ├─ Build-Release.cmd     一键发布构建
 └─ Run-Portable.vbs      无控制台启动便携版
 ```
-
-## 交流群
-
-扫码加入交流群，反馈问题、交流 Codex 使用经验：
-
-<p align="center">
-  <img src="docs/images/community-qr.jpg" width="360" alt="Codex 提示音管理器交流群二维码" />
-</p>
 
 ## 许可证
 

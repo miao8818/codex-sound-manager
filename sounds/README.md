@@ -11,5 +11,5 @@ python .\scripts\generate_default_sound.py
 用户在应用中选择的自定义音频不会写入项目目录，而会复制到：
 
 ```text
-%LOCALAPPDATA%\CodexSoundManager\sounds\
+~\.codex\codex-sound-manager\sounds\
 ```

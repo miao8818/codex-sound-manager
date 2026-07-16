@@ -1,7 +1,11 @@
 {
   "name": "codex-sound-manager",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "Windows global task completion sound manager for Codex",
+  "license": "MIT",
+  "repository": "https://github.com/miao8818/codex-sound-manager",
+  "homepage": "https://github.com/miao8818/codex-sound-manager",
   "type": "module",
   "scripts": {
     "dev": "vite --port 1422",
@@ -10,6 +14,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tauri-apps/api": "^2.11.0",
