@@ -89,7 +89,7 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\nsis\` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.0.0_x64-setup.exe` |
 | 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.0.0_x64-portable.zip` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。

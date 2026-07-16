@@ -85,7 +85,7 @@ The script generates the icon and default sound, installs frontend dependencies,
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\nsis\` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.0.0_x64-setup.exe` |
 | Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.0.0_x64-portable.zip` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.

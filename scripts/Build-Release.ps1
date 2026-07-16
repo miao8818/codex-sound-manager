@@ -83,6 +83,28 @@ function New-PortablePackage {
     Write-Host "Portable package: $zipPath"
 }
 
+function Copy-ReleaseInstaller {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ProjectRoot
+    )
+
+    $config = Get-Content -LiteralPath (Join-Path $ProjectRoot 'tauri.conf.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $nsisDirectory = Join-Path $ProjectRoot 'target\release\bundle\nsis'
+    $installer = Get-ChildItem -LiteralPath $nsisDirectory -File |
+        Where-Object { $_.Name -like "*_$($config.version)_x64-setup.exe" } |
+        Select-Object -First 1
+    if (-not $installer) {
+        throw "NSIS installer is missing from $nsisDirectory"
+    }
+
+    $releaseDirectory = Join-Path $ProjectRoot 'target\release\bundle\release'
+    [System.IO.Directory]::CreateDirectory($releaseDirectory) | Out-Null
+    $destination = Join-Path $releaseDirectory "CodexSoundManager_$($config.version)_x64-setup.exe"
+    Copy-Item -LiteralPath $installer.FullName -Destination $destination -Force
+    Write-Host "Release installer: $destination"
+}
+
 $env:PYTHONIOENCODING = 'utf-8'
 Invoke-CheckedNative -Step 'Default sound generation' -Command { python (Join-Path $PSScriptRoot 'generate_default_sound.py') | Out-Null }
 Invoke-CheckedNative -Step 'Frontend dependency installation' -Command { npm ci }
@@ -90,4 +112,5 @@ Invoke-CheckedNative -Step 'Frontend checks' -Command { npm run check }
 Invoke-CheckedNative -Step 'Rust tests' -Command { cargo test }
 Invoke-CheckedNative -Step 'Rust lint checks' -Command { cargo clippy --all-targets -- -D warnings }
 Invoke-CheckedNative -Step 'Tauri release build' -Command { npm run tauri -- build }
+Copy-ReleaseInstaller -ProjectRoot $root
 New-PortablePackage -ProjectRoot $root
