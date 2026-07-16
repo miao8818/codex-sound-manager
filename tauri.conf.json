@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Codex 提示音管理器",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "identifier": "com.codexsound.manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -21,6 +21,27 @@
         "center": true,
         "resizable": true,
         "maximized": false
+      },
+      {
+        "label": "floating-ball",
+        "title": "Codex 提示音快捷开关",
+        "url": "floating.html",
+        "width": 76,
+        "height": 76,
+        "minWidth": 76,
+        "minHeight": 76,
+        "maxWidth": 76,
+        "maxHeight": 76,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

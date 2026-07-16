@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import {
   AlertTriangle,
   BellRing,
   CheckCircle2,
+  CircleDot,
   FileAudio,
   FolderOpen,
+  LogOut,
   MessageCircle,
   Minus,
+  Minimize2,
   Play,
   Plus,
   RefreshCw,
@@ -29,6 +33,7 @@ import { cn } from './lib/utils'
 type AppSettings = {
   enabled: boolean
   playCount: number
+  floatingBallEnabled: boolean
   soundPath: string | null
   soundName: string | null
   previousNotifier: string[] | null
@@ -66,6 +71,7 @@ type Notice = {
 const emptySettings: AppSettings = {
   enabled: true,
   playCount: 2,
+  floatingBallEnabled: false,
   soundPath: null,
   soundName: null,
   previousNotifier: null,
@@ -84,8 +90,9 @@ export default function App() {
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [settings, setSettings] = useState<AppSettings>(emptySettings)
   const [soundName, setSoundName] = useState('内置默认提示音')
-  const [busy, setBusy] = useState<'scan' | 'preview' | 'apply' | 'remove' | 'sound' | null>('scan')
+  const [busy, setBusy] = useState<'scan' | 'preview' | 'apply' | 'remove' | 'sound' | 'floating' | 'close' | null>('scan')
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false)
 
   const syncScan = useCallback((result: ScanResult) => {
     setScan(result)
@@ -108,6 +115,39 @@ export default function App() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    let disposed = false
+    const unlisteners: Array<() => void> = []
+    const subscribe = <T,>(eventName: string, handler: (payload: T) => void) => {
+      void listen<T>(eventName, (event) => {
+        if (!disposed) handler(event.payload)
+      }).then((unlisten) => {
+        if (disposed) {
+          unlisten()
+        } else {
+          unlisteners.push(unlisten)
+        }
+      }).catch((error) => {
+        if (!disposed) {
+          setNotice({ tone: 'error', message: `监听程序状态失败：${errorMessage(error)}` })
+        }
+      })
+    }
+
+    subscribe<void>('close-choice-requested', () => setCloseDialogOpen(true))
+    subscribe<boolean>('sound-enabled-changed', (enabled) => {
+      setSettings((current) => ({ ...current, enabled }))
+    })
+    subscribe<boolean>('floating-ball-enabled-changed', (floatingBallEnabled) => {
+      setSettings((current) => ({ ...current, floatingBallEnabled }))
+    })
+
+    return () => {
+      disposed = true
+      unlisteners.forEach((unlisten) => unlisten())
+    }
+  }, [])
 
   const updateCount = (delta: number) => {
     setSettings((current) => ({
@@ -135,6 +175,35 @@ export default function App() {
   const resetSound = () => {
     setSettings((current) => ({ ...current, soundPath: null, soundName: null }))
     setSoundName('内置默认提示音')
+  }
+
+  const updateFloatingBall = async (enabled: boolean) => {
+    setBusy('floating')
+    setNotice(null)
+    try {
+      const floatingBallEnabled = await invoke<boolean>('set_floating_ball_enabled', { enabled })
+      setSettings((current) => ({ ...current, floatingBallEnabled }))
+      setNotice({
+        tone: 'success',
+        message: floatingBallEnabled ? '桌面悬浮球已显示' : '桌面悬浮球已隐藏',
+      })
+    } catch (error) {
+      setNotice({ tone: 'error', message: errorMessage(error) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const resolveCloseChoice = async (choice: 'exit' | 'tray' | 'cancel') => {
+    setBusy('close')
+    try {
+      await invoke('resolve_close_choice', { choice })
+      setCloseDialogOpen(false)
+    } catch (error) {
+      setNotice({ tone: 'error', message: errorMessage(error) })
+    } finally {
+      setBusy(null)
+    }
   }
 
   const preview = async () => {
@@ -232,20 +301,37 @@ export default function App() {
         </section>
 
         <section className="overflow-hidden border border-border bg-white shadow-panel">
-          <div className="flex min-h-[82px] items-center justify-between gap-8 border-b border-border px-6 py-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <Volume2 className="size-[18px] text-primary" aria-hidden="true" />
-                <h2 className="text-sm font-bold">任务完成提示音</h2>
+          <div className="grid min-h-[82px] grid-cols-2 border-b border-border px-6 py-4">
+            <div className="flex items-center justify-between gap-5 border-r border-border pr-6">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <Volume2 className="size-[18px] text-primary" aria-hidden="true" />
+                  <h2 className="text-sm font-bold">任务完成提示音</h2>
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">{settings.enabled ? '当前已开启' : '当前已关闭'}</p>
               </div>
-              <p className="mt-1.5 text-xs text-muted-foreground">{settings.enabled ? '当前已开启' : '当前已关闭'}</p>
+              <Switch
+                checked={settings.enabled}
+                onCheckedChange={(enabled) => setSettings((current) => ({ ...current, enabled }))}
+                disabled={disabled}
+                aria-label="启用任务完成提示音"
+              />
             </div>
-            <Switch
-              checked={settings.enabled}
-              onCheckedChange={(enabled) => setSettings((current) => ({ ...current, enabled }))}
-              disabled={disabled}
-              aria-label="启用任务完成提示音"
-            />
+            <div className="flex items-center justify-between gap-5 pl-6">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <CircleDot className="size-[18px] text-[#2563eb]" aria-hidden="true" />
+                  <h2 className="text-sm font-bold">桌面悬浮球</h2>
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">{settings.floatingBallEnabled ? '已显示，可快速切换提示音' : '当前已隐藏'}</p>
+              </div>
+              <Switch
+                checked={settings.floatingBallEnabled}
+                onCheckedChange={(enabled) => void updateFloatingBall(enabled)}
+                disabled={disabled}
+                aria-label="启用桌面悬浮球"
+              />
+            </div>
           </div>
 
           <div className="grid min-h-[90px] grid-cols-[1fr_auto] items-center gap-8 border-b border-border px-6 py-4">
@@ -333,6 +419,45 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        <Dialog
+          open={closeDialogOpen}
+          onOpenChange={(open) => {
+            if (busy !== 'close') setCloseDialogOpen(open)
+          }}
+        >
+          <DialogContent>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <DialogTitle>关闭提示音管理器</DialogTitle>
+                <DialogDescription className="mt-1.5">请选择退出程序，或让工具继续在系统托盘运行。</DialogDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="-mr-2 -mt-2"
+                onClick={() => void resolveCloseChoice('cancel')}
+                disabled={busy === 'close'}
+                aria-label="取消关闭"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => void resolveCloseChoice('cancel')} disabled={busy === 'close'}>
+                取消
+              </Button>
+              <Button variant="secondary" onClick={() => void resolveCloseChoice('tray')} disabled={busy === 'close'}>
+                <Minimize2 className="size-4" aria-hidden="true" />
+                最小化到托盘
+              </Button>
+              <Button variant="destructive" onClick={() => void resolveCloseChoice('exit')} disabled={busy === 'close'}>
+                <LogOut className="size-4" aria-hidden="true" />
+                退出程序
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <footer className="flex items-center justify-between px-1 pt-4 text-[11px] text-muted-foreground">
           <span>Codex Sound Manager</span>

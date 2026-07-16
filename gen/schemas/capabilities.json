@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Allow the two local application windows to use Tauri core APIs.","local":true,"windows":["main","floating-ball"],"permissions":["core:default"]}}

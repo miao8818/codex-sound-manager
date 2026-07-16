@@ -30,6 +30,8 @@ Scan the QR code to contact the developer, report issues, or join Codex discussi
 | Global configuration | One setup covers every Codex conversation and project for the Windows user |
 | Custom sounds | WAV, MP3, FLAC, OGG, M4A and AAC files up to 50 MB; the picker opens in the sound library |
 | Repeat count | Play the completion sound 1–10 times |
+| System tray | Choose whether to quit or keep running in the tray; restore the window and switch states from the tray menu |
+| Desktop floating control | Optional draggable control for instantly enabling or disabling completion sounds |
 | Original default sound | `sounds/default-notification.wav` is safe to redistribute with the project |
 | Format-preserving edits | Uses `toml_edit` to preserve comments, ordering and unrelated settings |
 | Existing callback support | Preserves existing notifiers and Codex Computer Use `--previous-notify` wrappers |
@@ -44,7 +46,7 @@ Scan the QR code to contact the developer, report issues, or join Codex discussi
 1. Download the latest Windows installer from GitHub Releases.
 2. Open **Codex Sound Manager**.
 3. Confirm that Codex has been detected.
-4. Choose the enabled state, repeat count and sound file.
+4. Choose the enabled state, repeat count and sound file, and optionally enable the desktop floating control.
 5. Select **Apply to Codex**.
 6. Fully quit and reopen Codex.
 
@@ -57,6 +59,13 @@ codex-sound-manager.exe
 ```
 
 You can also double-click `Run-Portable.vbs` in the same directory. In a source checkout, this launcher automatically finds the release executable under `target\release`.
+
+## Tray and Floating Control
+
+- Closing the main window offers **Quit**, **Minimize to tray**, and **Cancel**.
+- Left-click the tray icon to restore the main window. Its context menu can switch the sound, show or hide the floating control, or quit the app.
+- Enable **Desktop floating control** in the main window, then click the control to switch completion sounds instantly. Drag its top handle to move it, or right-click it to open the main window.
+- Floating-control visibility and quick sound changes are saved immediately; selecting **Apply to Codex** again is not required.
 
 ## Run from Source
 
@@ -94,8 +103,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.1.0_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.1.0_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.2.0_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.2.0_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.
@@ -142,6 +151,10 @@ The development terminal hosts hot reload and compiler output. Release, installe
 ### No sound is audible
 
 Use **Preview** first. If preview is also silent, check the Windows volume mixer, the default output device and whether the selected file still exists.
+
+### How do I quit after minimizing to the tray?
+
+Right-click the app icon in the system tray and select **Quit**. You can also restore the main window, close it, and choose **Quit** from the prompt.
 
 ### Moving the portable app breaks notifications
 

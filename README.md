@@ -30,6 +30,8 @@
 | 全局生效 | 一套设置覆盖当前 Windows 用户的所有 Codex 对话和项目 |
 | 自定义声音 | 支持 WAV、MP3、FLAC、OGG、M4A、AAC，最大 50 MB，选择器默认打开声音库 |
 | 播放次数 | 每次任务完成可连续播放 1–10 次 |
+| 系统托盘 | 关闭主窗口时可选择退出程序或继续在托盘运行，托盘菜单可恢复窗口和切换状态 |
+| 桌面悬浮球 | 可按需显示、自由拖动，并一键开启或关闭提示音 |
 | 原创默认音频 | `sounds/default-notification.wav` 随项目公开分发 |
 | 安全修改配置 | 使用 `toml_edit` 保留原 TOML 的注释、顺序和其他字段 |
 | 保留已有回调 | 兼容 Codex Computer Use 的 `--previous-notify` 包装 |
@@ -44,7 +46,7 @@
 1. 从 GitHub Releases 下载最新的 Windows 安装包。
 2. 完成安装后打开 **Codex 提示音管理器**。
 3. 确认页面顶部已发现 Codex。
-4. 设置启用开关、播放次数和音频文件。
+4. 设置启用开关、播放次数、音频文件，并按需开启桌面悬浮球。
 5. 点击 **应用到 Codex**。
 6. 完整退出并重新打开 Codex。
 
@@ -57,6 +59,13 @@ codex-sound-manager.exe
 ```
 
 也可以双击同目录的 `Run-Portable.vbs`。源码目录中的这个入口也会自动寻找 `target\release` 下的正式版程序。
+
+## 托盘与桌面悬浮球
+
+- 点击主窗口的关闭按钮后，可以选择 **退出程序**、**最小化到托盘** 或 **取消**。
+- 左键点击托盘图标可恢复主窗口；右键菜单可切换提示音、显示或隐藏悬浮球，也可彻底退出程序。
+- 在主界面开启 **桌面悬浮球** 后，点击球体可立即开启或关闭提示音；拖动顶部抓手可调整位置；右键点击可打开主窗口。
+- 悬浮球开关和快捷提示音开关会立即保存，不需要再次点击 **应用到 Codex**。
 
 ## 从源码启动
 
@@ -98,8 +107,8 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.1.0_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.1.0_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.2.0_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.2.0_x64-portable.zip` |
 | SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。
@@ -146,6 +155,10 @@ sounds\default-notification.wav
 ### 为什么听不到声音？
 
 先在工具中点击 **试听**。若试听也没有声音，请检查 Windows 音量合成器、默认输出设备以及音频文件是否仍存在。
+
+### 最小化到托盘后如何彻底退出？
+
+右键点击系统托盘中的程序图标，然后选择 **退出程序**。再次打开主窗口并点击关闭按钮，也可以选择 **退出程序**。
 
 ### 移动程序后为什么失效？
 

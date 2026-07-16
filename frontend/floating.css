@@ -1,0 +1,154 @@
+@font-face {
+  font-family: 'Codex CJK';
+  src: url('../assets/NotoSansCJKsc-Regular.otf') format('opentype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#floating-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#floating-root {
+  display: grid;
+  place-items: center;
+}
+
+body,
+button {
+  font-family: 'Codex CJK', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+button {
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.floating-shell {
+  position: relative;
+  width: calc(100vmin - 8px);
+  height: calc(100vmin - 8px);
+  border: 1px solid #5eead4;
+  border-radius: 50%;
+  background: #111827;
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.22), 0 0 18px rgba(20, 184, 166, 0.28), 0 8px 24px rgba(15, 23, 42, 0.3);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.floating-shell.is-enabled {
+  border-color: #5eead4;
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.28), 0 0 20px rgba(20, 184, 166, 0.34), 0 8px 24px rgba(15, 23, 42, 0.32);
+}
+
+.floating-shell.is-disabled {
+  border-color: #64748b;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.15), 0 8px 24px rgba(15, 23, 42, 0.28);
+}
+
+.sound-toggle {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  place-items: center;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.sound-toggle:focus-visible {
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.9);
+}
+
+.sound-toggle:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.sound-toggle > .code-icon {
+  width: 42%;
+  height: 42%;
+  margin-top: 8%;
+  color: #ecfeff;
+  stroke-width: 2;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.sound-toggle:hover > .code-icon {
+  transform: scale(1.06);
+}
+
+.is-disabled .sound-toggle > .code-icon {
+  color: #cbd5e1;
+}
+
+.drag-handle {
+  position: absolute;
+  top: 2%;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  width: 44%;
+  height: 25%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transform: translateX(-50%);
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle svg {
+  width: 60%;
+  height: 60%;
+  color: rgba(153, 246, 228, 0.72);
+}
+
+.sound-status {
+  position: absolute;
+  right: 13%;
+  bottom: 14%;
+  display: grid;
+  width: 25%;
+  height: 25%;
+  place-items: center;
+  border: 1px solid rgba(236, 254, 255, 0.92);
+  border-radius: 50%;
+  background: #0f8b78;
+}
+
+.sound-status svg {
+  width: 60%;
+  height: 60%;
+  color: white;
+  stroke-width: 2.4;
+}
+
+.is-disabled .sound-status {
+  border-color: #cbd5e1;
+  background: #475569;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-shell {
+    transition: none;
+  }
+}

@@ -10,5 +10,11 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     target: 'es2022',
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        floating: 'floating.html',
+      },
+    },
   },
 })

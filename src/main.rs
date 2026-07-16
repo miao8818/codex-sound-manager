@@ -10,6 +10,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use toml_edit::{Array, DocumentMut, Item, Value};
 
 const APP_DIR_NAME: &str = "codex-sound-manager";
@@ -21,12 +26,20 @@ const CONFIG_BACKUP_NAME: &str = "config.toml.codex-sound-manager.bak";
 const MAX_SOUND_BYTES: u64 = 50 * 1024 * 1024;
 const DEFAULT_SOUND_BYTES: &[u8] = include_bytes!("../sounds/default-notification.wav");
 const SUPPORTED_SOUND_EXTENSIONS: &[&str] = &["wav", "mp3", "flac", "ogg", "m4a", "aac"];
+const MAIN_WINDOW_LABEL: &str = "main";
+const FLOATING_WINDOW_LABEL: &str = "floating-ball";
+const TRAY_ICON_ID: &str = "main-tray";
+const MENU_SHOW_MAIN: &str = "show-main";
+const MENU_TOGGLE_SOUND: &str = "toggle-sound";
+const MENU_TOGGLE_FLOATING: &str = "toggle-floating";
+const MENU_QUIT: &str = "quit";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct AppSettings {
     enabled: bool,
     play_count: u8,
+    floating_ball_enabled: bool,
     sound_path: Option<String>,
     sound_name: Option<String>,
     previous_notifier: Option<Vec<String>>,
@@ -38,6 +51,7 @@ impl Default for AppSettings {
         Self {
             enabled: true,
             play_count: 2,
+            floating_ball_enabled: false,
             sound_path: None,
             sound_name: None,
             previous_notifier: None,
@@ -73,6 +87,33 @@ struct OperationResult {
 struct SoundSelection {
     path: String,
     name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimePreferences {
+    sound_enabled: bool,
+    floating_ball_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CloseChoice {
+    Exit,
+    MinimizeToTray,
+    Cancel,
+}
+
+impl TryFrom<&str> for CloseChoice {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "exit" => Ok(Self::Exit),
+            "tray" => Ok(Self::MinimizeToTray),
+            "cancel" => Ok(Self::Cancel),
+            _ => Err("无效的关闭选项".to_string()),
+        }
+    }
 }
 
 struct LockGuard {
@@ -613,6 +654,119 @@ fn scan_internal(settings: AppSettings) -> Result<ScanResult, String> {
     })
 }
 
+fn runtime_preferences(settings: &AppSettings) -> RuntimePreferences {
+    RuntimePreferences {
+        sound_enabled: settings.enabled,
+        floating_ball_enabled: settings.floating_ball_enabled,
+    }
+}
+
+fn update_tray_tooltip(app: &AppHandle, settings: &AppSettings) {
+    if let Some(tray) = app.tray_by_id(TRAY_ICON_ID) {
+        let sound_status = if settings.enabled {
+            "已开启"
+        } else {
+            "已关闭"
+        };
+        let floating_status = if settings.floating_ball_enabled {
+            "已显示"
+        } else {
+            "已隐藏"
+        };
+        let tooltip =
+            format!("Codex 提示音管理器\n提示音：{sound_status}\n悬浮球：{floating_status}");
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+
+fn emit_sound_enabled(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    app.emit("sound-enabled-changed", settings.enabled)
+        .map_err(|error| format!("同步提示音状态失败：{error}"))?;
+    update_tray_tooltip(app, settings);
+    Ok(())
+}
+
+fn emit_floating_ball_enabled(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
+    app.emit(
+        "floating-ball-enabled-changed",
+        settings.floating_ball_enabled,
+    )
+    .map_err(|error| format!("同步悬浮球状态失败：{error}"))?;
+    update_tray_tooltip(app, settings);
+    Ok(())
+}
+
+fn show_main_window_internal(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "找不到主窗口".to_string())?;
+    window
+        .show()
+        .map_err(|error| format!("显示主窗口失败：{error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("聚焦主窗口失败：{error}"))
+}
+
+fn set_floating_ball_visibility(app: &AppHandle, visible: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window(FLOATING_WINDOW_LABEL)
+        .ok_or_else(|| "找不到桌面悬浮球窗口".to_string())?;
+    if visible {
+        window
+            .show()
+            .map_err(|error| format!("显示桌面悬浮球失败：{error}"))
+    } else {
+        window
+            .hide()
+            .map_err(|error| format!("隐藏桌面悬浮球失败：{error}"))
+    }
+}
+
+fn position_floating_ball(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(FLOATING_WINDOW_LABEL)
+        .ok_or_else(|| "找不到桌面悬浮球窗口".to_string())?;
+    let Some(monitor) = window
+        .primary_monitor()
+        .map_err(|error| format!("读取主显示器失败：{error}"))?
+    else {
+        return Ok(());
+    };
+    let window_size = window
+        .outer_size()
+        .map_err(|error| format!("读取悬浮球大小失败：{error}"))?;
+    let work_area = monitor.work_area();
+    let margin = (20.0 * monitor.scale_factor()).round() as i32;
+    let x = work_area.position.x + work_area.size.width as i32 - window_size.width as i32 - margin;
+    let y =
+        work_area.position.y + work_area.size.height as i32 - window_size.height as i32 - margin;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| format!("定位桌面悬浮球失败：{error}"))
+}
+
+fn toggle_sound_enabled_internal(app: &AppHandle) -> Result<bool, String> {
+    let mut settings = load_settings()?;
+    settings.enabled = !settings.enabled;
+    save_settings(&settings)?;
+    emit_sound_enabled(app, &settings)?;
+    Ok(settings.enabled)
+}
+
+fn set_floating_ball_enabled_internal(app: &AppHandle, enabled: bool) -> Result<bool, String> {
+    let mut settings = load_settings()?;
+    let previous = settings.floating_ball_enabled;
+    settings.floating_ball_enabled = enabled;
+    set_floating_ball_visibility(app, enabled)?;
+    if let Err(error) = save_settings(&settings) {
+        let _ = set_floating_ball_visibility(app, previous);
+        return Err(error);
+    }
+    emit_floating_ball_enabled(app, &settings)?;
+    Ok(settings.floating_ball_enabled)
+}
+
 #[tauri::command]
 fn scan_codex() -> Result<ScanResult, String> {
     scan_internal(load_settings()?)
@@ -665,7 +819,69 @@ async fn preview_sound(settings: AppSettings) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn apply_configuration(mut settings: AppSettings) -> Result<OperationResult, String> {
+fn get_runtime_preferences() -> Result<RuntimePreferences, String> {
+    load_settings().map(|settings| runtime_preferences(&settings))
+}
+
+#[tauri::command]
+fn toggle_sound_enabled(app: AppHandle) -> Result<bool, String> {
+    toggle_sound_enabled_internal(&app)
+}
+
+#[tauri::command]
+fn set_floating_ball_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    set_floating_ball_enabled_internal(&app, enabled)
+}
+
+#[tauri::command]
+fn show_main_window(app: AppHandle) -> Result<(), String> {
+    show_main_window_internal(&app)
+}
+
+#[tauri::command]
+fn move_floating_ball_by(
+    window: tauri::WebviewWindow,
+    delta_x: f64,
+    delta_y: f64,
+) -> Result<(), String> {
+    if window.label() != FLOATING_WINDOW_LABEL {
+        return Err("只有桌面悬浮球可以移动".to_string());
+    }
+    let position = window
+        .outer_position()
+        .map_err(|error| format!("读取悬浮球位置失败：{error}"))?;
+    let scale_factor = window
+        .scale_factor()
+        .map_err(|error| format!("读取显示缩放比例失败：{error}"))?;
+    let x = position.x + (delta_x * scale_factor).round() as i32;
+    let y = position.y + (delta_y * scale_factor).round() as i32;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| format!("移动桌面悬浮球失败：{error}"))
+}
+
+#[tauri::command]
+fn resolve_close_choice(app: AppHandle, choice: &str) -> Result<(), String> {
+    match CloseChoice::try_from(choice)? {
+        CloseChoice::Exit => app.exit(0),
+        CloseChoice::MinimizeToTray => {
+            let window = app
+                .get_webview_window(MAIN_WINDOW_LABEL)
+                .ok_or_else(|| "找不到主窗口".to_string())?;
+            window
+                .hide()
+                .map_err(|error| format!("最小化到系统托盘失败：{error}"))?;
+        }
+        CloseChoice::Cancel => {}
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn apply_configuration(
+    app: AppHandle,
+    mut settings: AppSettings,
+) -> Result<OperationResult, String> {
     validate_settings(&settings)?;
     let codex_home = find_codex_home(&settings);
     if !codex_home.is_dir() {
@@ -678,6 +894,9 @@ fn apply_configuration(mut settings: AppSettings) -> Result<OperationResult, Str
     settings.codex_home = Some(codex_home.to_string_lossy().to_string());
     save_settings(&settings)?;
     write_config(&config_path, &document)?;
+    set_floating_ball_visibility(&app, settings.floating_ball_enabled)?;
+    emit_sound_enabled(&app, &settings)?;
+    emit_floating_ball_enabled(&app, &settings)?;
     Ok(OperationResult {
         message: "已写入 Codex 全局配置，请完整重启 Codex".to_string(),
         scan: scan_internal(settings)?,
@@ -783,6 +1002,10 @@ fn run_previous_notifier(command: &[String], payload_args: &[String]) -> Result<
     Ok(())
 }
 
+fn notification_success_message(play_count: u8) -> String {
+    format!("中文动态日志：任务完成，提示音已播放 {play_count} 次")
+}
+
 fn run_notification(payload_args: &[String]) {
     let settings = match load_settings() {
         Ok(settings) => settings,
@@ -805,12 +1028,80 @@ fn run_notification(payload_args: &[String]) {
         return;
     };
     match play_sound(&settings) {
-        Ok(()) => append_log(&format!(
-            "中文动态日志：任务完成，提示音已播放 {} 次",
-            settings.play_count
-        )),
+        Ok(()) => append_log(&notification_success_message(settings.play_count)),
         Err(error) => append_log(&format!("播放失败：{error}")),
     }
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show_main = MenuItem::with_id(app, MENU_SHOW_MAIN, "打开主窗口", true, None::<&str>)?;
+    let toggle_sound = MenuItem::with_id(
+        app,
+        MENU_TOGGLE_SOUND,
+        "开启 / 关闭提示音",
+        true,
+        None::<&str>,
+    )?;
+    let toggle_floating = MenuItem::with_id(
+        app,
+        MENU_TOGGLE_FLOATING,
+        "显示 / 隐藏悬浮球",
+        true,
+        None::<&str>,
+    )?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, MENU_QUIT, "退出程序", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show_main,
+            &toggle_sound,
+            &toggle_floating,
+            &separator,
+            &quit,
+        ],
+    )?;
+
+    let mut builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
+        .menu(&menu)
+        .tooltip("Codex 提示音管理器")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| {
+            let result = if event.id() == MENU_SHOW_MAIN {
+                show_main_window_internal(app)
+            } else if event.id() == MENU_TOGGLE_SOUND {
+                toggle_sound_enabled_internal(app).map(|_| ())
+            } else if event.id() == MENU_TOGGLE_FLOATING {
+                load_settings().and_then(|settings| {
+                    set_floating_ball_enabled_internal(app, !settings.floating_ball_enabled)
+                        .map(|_| ())
+                })
+            } else if event.id() == MENU_QUIT {
+                app.exit(0);
+                Ok(())
+            } else {
+                Ok(())
+            };
+            if let Err(error) = result {
+                append_log(&format!("托盘操作失败：{error}"));
+            }
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+                && let Err(error) = show_main_window_internal(tray.app_handle())
+            {
+                append_log(&format!("托盘打开主窗口失败：{error}"));
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+    Ok(())
 }
 
 fn main() {
@@ -821,10 +1112,43 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .setup(|app| {
+            setup_tray(app)?;
+            let settings = load_settings().unwrap_or_else(|error| {
+                append_log(&format!("启动时读取设置失败：{error}"));
+                AppSettings::default()
+            });
+            if let Err(error) = position_floating_ball(app.handle()) {
+                append_log(&error);
+            }
+            if let Err(error) =
+                set_floating_ball_visibility(app.handle(), settings.floating_ball_enabled)
+            {
+                append_log(&error);
+            }
+            update_tray_tooltip(app.handle(), &settings);
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == MAIN_WINDOW_LABEL
+                && let WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                if let Err(error) = window.app_handle().emit("close-choice-requested", ()) {
+                    append_log(&format!("打开关闭选择窗口失败：{error}"));
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             scan_codex,
             choose_sound,
             preview_sound,
+            get_runtime_preferences,
+            toggle_sound_enabled,
+            set_floating_ball_enabled,
+            show_main_window,
+            move_floating_ball_by,
+            resolve_close_choice,
             apply_configuration,
             remove_configuration
         ])
@@ -937,7 +1261,39 @@ notify = ["notify-send", "Codex"]
         let settings = serde_json::from_str::<AppSettings>(r#"{"enabled":false}"#).unwrap();
         assert!(!settings.enabled);
         assert_eq!(settings.play_count, 2);
+        assert!(!settings.floating_ball_enabled);
         assert!(settings.sound_name.is_none());
+    }
+
+    #[test]
+    fn validates_close_choices() {
+        assert_eq!(CloseChoice::try_from("exit"), Ok(CloseChoice::Exit));
+        assert_eq!(
+            CloseChoice::try_from("tray"),
+            Ok(CloseChoice::MinimizeToTray)
+        );
+        assert_eq!(CloseChoice::try_from("cancel"), Ok(CloseChoice::Cancel));
+        assert!(CloseChoice::try_from("unknown").is_err());
+    }
+
+    #[test]
+    fn exposes_runtime_preferences_without_configuration_details() {
+        let settings = AppSettings {
+            enabled: false,
+            floating_ball_enabled: true,
+            ..AppSettings::default()
+        };
+        let preferences = runtime_preferences(&settings);
+        assert!(!preferences.sound_enabled);
+        assert!(preferences.floating_ball_enabled);
+    }
+
+    #[test]
+    fn preserves_chinese_dynamic_log_text() {
+        assert_eq!(
+            notification_success_message(2),
+            "中文动态日志：任务完成，提示音已播放 2 次"
+        );
     }
 
     #[test]

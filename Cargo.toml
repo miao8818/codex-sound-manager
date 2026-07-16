@@ -1,6 +1,6 @@
 [package]
 name = "codex-sound-manager"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 description = "Global task completion sound manager for Codex on Windows"
 license = "MIT"
@@ -20,7 +20,7 @@ rfd = { version = "0.15", default-features = false }
 rodio = { version = "0.21.1", features = ["symphonia-all"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 toml_edit = "0.23"
 
 [dev-dependencies]
