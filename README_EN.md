@@ -31,7 +31,7 @@ Scan the QR code to contact the developer, report issues, or join Codex discussi
 | Custom sounds | WAV, MP3, FLAC, OGG, M4A and AAC files up to 50 MB; the picker opens in the sound library |
 | Repeat count | Play the completion sound 1–10 times |
 | System tray | Choose whether to quit or keep running in the tray; restore the window and switch states from the tray menu |
-| Desktop floating control | Optional draggable control for instantly enabling or disabling completion sounds |
+| Desktop floating control | Optional spherical tech control that drags smoothly from any point and instantly switches completion sounds |
 | Original default sound | `sounds/default-notification.wav` is safe to redistribute with the project |
 | Format-preserving edits | Uses `toml_edit` to preserve comments, ordering and unrelated settings |
 | Existing callback support | Preserves existing notifiers and Codex Computer Use `--previous-notify` wrappers |
@@ -64,7 +64,8 @@ You can also double-click `Run-Portable.vbs` in the same directory. In a source 
 
 - Closing the main window offers **Quit**, **Minimize to tray**, and **Cancel**.
 - Left-click the tray icon to restore the main window. Its context menu can switch the sound, show or hide the floating control, or quit the app.
-- Enable **Desktop floating control** in the main window, then click the control to switch completion sounds instantly. Drag its top handle to move it, or right-click it to open the main window.
+- Enable **Desktop floating control** in the main window, then short-click the orb to switch completion sounds instantly. Hold and drag from any point on the orb to move it, or right-click it to open the main window.
+- Moving beyond the drag threshold never toggles the sound by mistake, and the window area outside the orb remains transparent.
 - Floating-control visibility and quick sound changes are saved immediately; selecting **Apply to Codex** again is not required.
 
 ## Run from Source
@@ -103,8 +104,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.2.0_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.2.0_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.1_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.1_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.

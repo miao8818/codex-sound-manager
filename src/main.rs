@@ -9,9 +9,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, State, WindowEvent,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -94,6 +95,25 @@ struct SoundSelection {
 struct RuntimePreferences {
     sound_enabled: bool,
     floating_ball_enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FloatingPrimaryAction {
+    moved: bool,
+    sound_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FloatingDragSession {
+    window_position: PhysicalPosition<i32>,
+    cursor_position: PhysicalPosition<f64>,
+    moved: bool,
+}
+
+#[derive(Default)]
+struct FloatingDragState {
+    session: Mutex<Option<FloatingDragSession>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -838,26 +858,110 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window_internal(&app)
 }
 
-#[tauri::command]
-fn move_floating_ball_by(
-    window: tauri::WebviewWindow,
-    delta_x: f64,
-    delta_y: f64,
-) -> Result<(), String> {
-    if window.label() != FLOATING_WINDOW_LABEL {
-        return Err("只有桌面悬浮球可以移动".to_string());
+fn ensure_floating_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() == FLOATING_WINDOW_LABEL {
+        Ok(())
+    } else {
+        Err("只有桌面悬浮球可以移动".to_string())
     }
-    let position = window
+}
+
+fn floating_drag_target(
+    session: &mut FloatingDragSession,
+    cursor_position: PhysicalPosition<f64>,
+) -> PhysicalPosition<i32> {
+    let delta_x = (cursor_position.x - session.cursor_position.x).round() as i64;
+    let delta_y = (cursor_position.y - session.cursor_position.y).round() as i64;
+    session.moved |= delta_x * delta_x + delta_y * delta_y >= 9;
+    let target_x = (i64::from(session.window_position.x) + delta_x)
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    let target_y = (i64::from(session.window_position.y) + delta_y)
+        .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    PhysicalPosition::new(target_x, target_y)
+}
+
+#[tauri::command]
+fn begin_floating_drag(
+    window: tauri::WebviewWindow,
+    drag_state: State<'_, FloatingDragState>,
+    pointer_x: f64,
+    pointer_y: f64,
+) -> Result<(), String> {
+    ensure_floating_window(&window)?;
+    if !pointer_x.is_finite() || !pointer_y.is_finite() {
+        return Err("悬浮球拖动起点无效".to_string());
+    }
+    let window_position = window
         .outer_position()
         .map_err(|error| format!("读取悬浮球位置失败：{error}"))?;
     let scale_factor = window
         .scale_factor()
         .map_err(|error| format!("读取显示缩放比例失败：{error}"))?;
-    let x = position.x + (delta_x * scale_factor).round() as i32;
-    let y = position.y + (delta_y * scale_factor).round() as i32;
+    let cursor_position = PhysicalPosition::new(
+        f64::from(window_position.x) + pointer_x * scale_factor,
+        f64::from(window_position.y) + pointer_y * scale_factor,
+    );
+    let mut session = drag_state
+        .session
+        .lock()
+        .map_err(|_| "悬浮球拖动状态不可用".to_string())?;
+    *session = Some(FloatingDragSession {
+        window_position,
+        cursor_position,
+        moved: false,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn update_floating_drag(
+    window: tauri::WebviewWindow,
+    drag_state: State<'_, FloatingDragState>,
+) -> Result<bool, String> {
+    ensure_floating_window(&window)?;
+    let cursor_position = window
+        .cursor_position()
+        .map_err(|error| format!("读取鼠标位置失败：{error}"))?;
+    let (target_position, moved) = {
+        let mut state = drag_state
+            .session
+            .lock()
+            .map_err(|_| "悬浮球拖动状态不可用".to_string())?;
+        let session = state
+            .as_mut()
+            .ok_or_else(|| "悬浮球拖动尚未开始".to_string())?;
+        let target_position = floating_drag_target(session, cursor_position);
+        (target_position, session.moved)
+    };
     window
-        .set_position(PhysicalPosition::new(x, y))
-        .map_err(|error| format!("移动桌面悬浮球失败：{error}"))
+        .set_position(target_position)
+        .map_err(|error| format!("移动桌面悬浮球失败：{error}"))?;
+    Ok(moved)
+}
+
+#[tauri::command]
+fn end_floating_drag(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    drag_state: State<'_, FloatingDragState>,
+    should_toggle: bool,
+) -> Result<FloatingPrimaryAction, String> {
+    ensure_floating_window(&window)?;
+    let moved = drag_state
+        .session
+        .lock()
+        .map_err(|_| "悬浮球拖动状态不可用".to_string())?
+        .take()
+        .is_some_and(|session| session.moved);
+    let sound_enabled = if should_toggle && !moved {
+        toggle_sound_enabled_internal(&app)?
+    } else {
+        load_settings()?.enabled
+    };
+    Ok(FloatingPrimaryAction {
+        moved,
+        sound_enabled,
+    })
 }
 
 #[tauri::command]
@@ -1112,6 +1216,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .manage(FloatingDragState::default())
         .setup(|app| {
             setup_tray(app)?;
             let settings = load_settings().unwrap_or_else(|error| {
@@ -1147,7 +1252,9 @@ fn main() {
             toggle_sound_enabled,
             set_floating_ball_enabled,
             show_main_window,
-            move_floating_ball_by,
+            begin_floating_drag,
+            update_floating_drag,
+            end_floating_drag,
             resolve_close_choice,
             apply_configuration,
             remove_configuration
@@ -1300,6 +1407,23 @@ notify = ["notify-send", "Codex"]
     fn validates_supported_audio_extensions_case_insensitively() {
         assert!(is_supported_sound_file(Path::new("notice.MP3")));
         assert!(!is_supported_sound_file(Path::new("notice.exe")));
+    }
+
+    #[test]
+    fn floating_drag_uses_physical_cursor_delta_and_threshold() {
+        let mut session = FloatingDragSession {
+            window_position: PhysicalPosition::new(100, 200),
+            cursor_position: PhysicalPosition::new(50.0, 80.0),
+            moved: false,
+        };
+
+        let nearby = floating_drag_target(&mut session, PhysicalPosition::new(52.0, 81.0));
+        assert_eq!((nearby.x, nearby.y), (102, 201));
+        assert!(!session.moved);
+
+        let moved = floating_drag_target(&mut session, PhysicalPosition::new(90.0, 120.0));
+        assert_eq!((moved.x, moved.y), (140, 240));
+        assert!(session.moved);
     }
 
     #[test]

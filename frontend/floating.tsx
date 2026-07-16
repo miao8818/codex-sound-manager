@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { Code2, GripHorizontal, Volume2, VolumeX } from 'lucide-react'
+import { Code2, Volume2, VolumeX } from 'lucide-react'
 import { createRoot } from 'react-dom/client'
 import './floating.css'
 
@@ -10,11 +10,28 @@ type RuntimePreferences = {
   floatingBallEnabled: boolean
 }
 
+type FloatingPrimaryAction = {
+  moved: boolean
+  soundEnabled: boolean
+}
+
+type FloatingGesture = {
+  pointerId: number
+  startX: number
+  startY: number
+  moved: boolean
+  finishing: boolean
+  animationFrame: number | null
+  commandChain: Promise<unknown>
+}
+
+const DRAG_THRESHOLD_PX = 3
+
 function FloatingBall() {
   const [enabled, setEnabled] = useState(true)
   const [busy, setBusy] = useState(true)
-  const dragPoint = useRef<{ pointerId: number; x: number; y: number } | null>(null)
-  const dragQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const [dragging, setDragging] = useState(false)
+  const gestureRef = useRef<FloatingGesture | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -51,47 +68,88 @@ function FloatingBall() {
     }
   }, [])
 
-  const toggleSound = async () => {
-    if (busy) return
-    setBusy(true)
-    try {
-      setEnabled(await invoke<boolean>('toggle_sound_enabled'))
-    } catch {
-      return
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const showMainWindow = (event: React.MouseEvent<HTMLDivElement>) => {
+  const showMainWindow = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     void invoke('show_main_window').catch(() => undefined)
   }
 
-  const beginDragging = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
+  const queuePositionUpdate = (gesture: FloatingGesture) => {
+    if (gesture.animationFrame !== null) return
+    gesture.animationFrame = requestAnimationFrame(() => {
+      gesture.animationFrame = null
+      gesture.commandChain = gesture.commandChain.then(() => invoke('update_floating_drag'))
+    })
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || gestureRef.current) return
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    dragPoint.current = { pointerId: event.pointerId, x: event.screenX, y: event.screenY }
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.screenX,
+      startY: event.screenY,
+      moved: false,
+      finishing: false,
+      animationFrame: null,
+      commandChain: invoke('begin_floating_drag', {
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+      }),
+    }
+    setDragging(true)
   }
 
-  const continueDragging = (event: React.PointerEvent<HTMLDivElement>) => {
-    const previous = dragPoint.current
-    if (!previous || previous.pointerId !== event.pointerId) return
-    const deltaX = event.screenX - previous.x
-    const deltaY = event.screenY - previous.y
-    if (deltaX === 0 && deltaY === 0) return
-    dragPoint.current = { pointerId: event.pointerId, x: event.screenX, y: event.screenY }
-    dragQueue.current = dragQueue.current
-      .then(() => invoke('move_floating_ball_by', { deltaX, deltaY }))
-      .catch(() => undefined)
+  const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = gestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
+    const moved = Math.hypot(
+      event.screenX - gesture.startX,
+      event.screenY - gesture.startY,
+    ) >= DRAG_THRESHOLD_PX
+    gesture.moved ||= moved
+    if (gesture.moved) {
+      queuePositionUpdate(gesture)
+    }
   }
 
-  const endDragging = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (dragPoint.current?.pointerId !== event.pointerId) return
-    dragPoint.current = null
+  const finishGesture = async (
+    event: React.PointerEvent<HTMLButtonElement>,
+    cancelled: boolean,
+  ) => {
+    const gesture = gestureRef.current
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
+    event.preventDefault()
+    gesture.finishing = true
+    const moved = Math.hypot(
+      event.screenX - gesture.startX,
+      event.screenY - gesture.startY,
+    ) >= DRAG_THRESHOLD_PX
+    gesture.moved ||= moved
+    if (gesture.animationFrame !== null) {
+      cancelAnimationFrame(gesture.animationFrame)
+      gesture.animationFrame = null
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    try {
+      await gesture.commandChain
+      if (gesture.moved) {
+        await invoke('update_floating_drag')
+      }
+      const result = await invoke<FloatingPrimaryAction>('end_floating_drag', {
+        shouldToggle: !cancelled && !gesture.moved && !busy,
+      })
+      setEnabled(result.soundEnabled)
+    } catch {
+      void invoke('end_floating_drag', { shouldToggle: false }).catch(() => undefined)
+      return
+    } finally {
+      if (gestureRef.current === gesture) {
+        gestureRef.current = null
+      }
+      setDragging(false)
     }
   }
 
@@ -99,21 +157,32 @@ function FloatingBall() {
   const StatusIcon = enabled ? Volume2 : VolumeX
 
   return (
-    <div className={`floating-shell ${enabled ? 'is-enabled' : 'is-disabled'}`} onContextMenu={showMainWindow}>
-      <div
-        className="drag-handle"
-        title="按住拖动悬浮球"
-        onPointerDown={beginDragging}
-        onPointerMove={continueDragging}
-        onPointerUp={endDragging}
-        onPointerCancel={endDragging}
+    <div className="floating-stage">
+      <button
+        className={`floating-orb ${enabled ? 'is-enabled' : 'is-disabled'} ${dragging ? 'is-dragging' : ''}`}
+        onContextMenu={showMainWindow}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={(event) => void finishGesture(event, false)}
+        onPointerCancel={(event) => void finishGesture(event, true)}
+        aria-label={label}
+        aria-pressed={enabled}
+        aria-disabled={busy}
+        title={`${label}；按住任意位置拖动；右键打开主窗口`}
       >
-        <GripHorizontal aria-hidden="true" />
-      </div>
-      <button className="sound-toggle" onClick={() => void toggleSound()} disabled={busy} aria-label={label} title={`${label}；右键打开主窗口`}>
-        <Code2 className="code-icon" aria-hidden="true" />
-        <span className="sound-status" aria-hidden="true">
-          <StatusIcon />
+        <span className="orb-shell" aria-hidden="true">
+          <span className="orb-grid" />
+          <span className="orb-glint" />
+          <span className="tech-orbit">
+            <span className="orbit-node orbit-node-a" />
+            <span className="orbit-node orbit-node-b" />
+          </span>
+          <span className="circuit circuit-left" />
+          <span className="circuit circuit-right" />
+          <Code2 className="code-icon" />
+          <span className="sound-status">
+            <StatusIcon />
+          </span>
         </span>
       </button>
     </div>
