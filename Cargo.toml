@@ -1,0 +1,25 @@
+[package]
+name = "codex-sound-manager"
+version = "1.0.0"
+edition = "2024"
+description = "Global task completion sound manager for Codex on Windows"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono = "0.4"
+rfd = "0.15"
+rodio = { version = "0.21.1", features = ["symphonia-all"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+toml_edit = "0.23"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

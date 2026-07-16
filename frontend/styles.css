@@ -1,0 +1,77 @@
+@font-face {
+  font-family: 'Codex CJK';
+  src: url('../assets/NotoSansCJKsc-Regular.otf') format('opentype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --background: 210 20% 97%;
+    --foreground: 220 24% 12%;
+    --border: 214 18% 88%;
+    --input: 214 15% 82%;
+    --ring: 173 80% 31%;
+    --primary: 173 80% 27%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 220 20% 18%;
+    --muted: 210 18% 95%;
+    --muted-foreground: 216 12% 45%;
+    --destructive: 0 68% 48%;
+    --destructive-foreground: 0 0% 100%;
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: hsl(var(--border));
+  }
+
+  html,
+  body,
+  #root {
+    min-width: 100%;
+    min-height: 100%;
+    margin: 0;
+  }
+
+  body {
+    overflow: hidden;
+    font-family: 'Codex CJK', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input {
+    font: inherit;
+    letter-spacing: 0;
+  }
+}
+
+@media (max-height: 650px) {
+  main {
+    padding-top: 16px !important;
+    padding-bottom: 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

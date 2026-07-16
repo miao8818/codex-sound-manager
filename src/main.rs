@@ -1,0 +1,726 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
+use chrono::Local;
+use rodio::{Decoder, OutputStreamBuilder, Sink};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::env;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, SystemTime};
+use toml_edit::{Array, DocumentMut, Item, Value};
+
+const APP_DIR_NAME: &str = "CodexSoundManager";
+const SETTINGS_FILE_NAME: &str = "settings.json";
+const LOCK_FILE_NAME: &str = "notify.lock";
+const LOG_FILE_NAME: &str = "notifier.log";
+const CONFIG_BACKUP_NAME: &str = "config.toml.codex-sound-manager.bak";
+const MAX_SOUND_BYTES: u64 = 50 * 1024 * 1024;
+const DEFAULT_SOUND_BYTES: &[u8] = include_bytes!("../sounds/default-notification.wav");
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppSettings {
+    enabled: bool,
+    play_count: u8,
+    sound_path: Option<String>,
+    previous_notifier: Option<Vec<String>>,
+    codex_home: Option<String>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            play_count: 2,
+            sound_path: None,
+            previous_notifier: None,
+            codex_home: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScanResult {
+    codex_found: bool,
+    config_found: bool,
+    configured: bool,
+    codex_home: String,
+    config_path: String,
+    executable_path: String,
+    sound_name: String,
+    using_default_sound: bool,
+    settings: AppSettings,
+    status_message: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OperationResult {
+    message: String,
+    scan: ScanResult,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SoundSelection {
+    path: String,
+    name: String,
+}
+
+struct LockGuard {
+    path: PathBuf,
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn app_data_dir() -> Result<PathBuf, String> {
+    env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|path| path.join(APP_DIR_NAME))
+        .ok_or_else(|| "无法确定当前用户的本地应用数据目录".to_string())
+}
+
+fn settings_path() -> Result<PathBuf, String> {
+    Ok(app_data_dir()?.join(SETTINGS_FILE_NAME))
+}
+
+fn load_settings() -> Result<AppSettings, String> {
+    let path = settings_path()?;
+    if !path.is_file() {
+        return Ok(AppSettings::default());
+    }
+
+    let content = fs::read_to_string(&path).map_err(|error| format!("读取设置失败：{error}"))?;
+    let mut settings: AppSettings =
+        serde_json::from_str(&content).map_err(|error| format!("设置文件格式无效：{error}"))?;
+    settings.play_count = settings.play_count.clamp(1, 10);
+    Ok(settings)
+}
+
+fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    validate_settings(settings)?;
+    let path = settings_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建设置目录失败：{error}"))?;
+    }
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|error| format!("生成设置文件失败：{error}"))?;
+    fs::write(&path, format!("{json}\n")).map_err(|error| format!("保存设置失败：{error}"))
+}
+
+fn validate_settings(settings: &AppSettings) -> Result<(), String> {
+    if !(1..=10).contains(&settings.play_count) {
+        return Err("播放次数必须在 1 到 10 之间".to_string());
+    }
+    if let Some(path) = settings.sound_path.as_deref()
+        && !Path::new(path).is_file()
+    {
+        return Err("自定义提示音文件不存在，请重新选择".to_string());
+    }
+    Ok(())
+}
+
+fn default_sound_path() -> Result<PathBuf, String> {
+    let sound_dir = app_data_dir()?.join("sounds");
+    fs::create_dir_all(&sound_dir).map_err(|error| format!("创建默认声音目录失败：{error}"))?;
+    let path = sound_dir.join("default-notification.wav");
+    let should_write = path
+        .metadata()
+        .map(|metadata| metadata.len() != DEFAULT_SOUND_BYTES.len() as u64)
+        .unwrap_or(true);
+    if should_write {
+        fs::write(&path, DEFAULT_SOUND_BYTES)
+            .map_err(|error| format!("写入默认提示音失败：{error}"))?;
+    }
+    Ok(path)
+}
+
+fn resolved_sound(settings: &AppSettings) -> Result<(PathBuf, bool), String> {
+    if let Some(path) = settings.sound_path.as_deref() {
+        let custom = PathBuf::from(path);
+        if custom.is_file() {
+            return Ok((custom, false));
+        }
+    }
+    Ok((default_sound_path()?, true))
+}
+
+fn play_sound(settings: &AppSettings) -> Result<(), String> {
+    validate_settings(settings)?;
+    if !settings.enabled {
+        return Ok(());
+    }
+
+    let (sound_path, _) = resolved_sound(settings)?;
+    let stream = OutputStreamBuilder::open_default_stream()
+        .map_err(|error| format!("无法打开默认音频设备：{error}"))?;
+    let sink = Sink::connect_new(stream.mixer());
+    sink.set_volume(1.0);
+
+    for _ in 0..settings.play_count {
+        let file = File::open(&sound_path)
+            .map_err(|error| format!("无法打开提示音 {}：{error}", sound_path.display()))?;
+        let source = Decoder::try_from(file)
+            .map_err(|error| format!("无法解码提示音 {}：{error}", sound_path.display()))?;
+        sink.append(source);
+        sink.sleep_until_end();
+    }
+    Ok(())
+}
+
+fn candidate_codex_homes(settings: &AppSettings) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = settings.codex_home.as_deref() {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(path) = env::var_os("CODEX_HOME") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Some(profile) = env::var_os("USERPROFILE") {
+        candidates.push(PathBuf::from(profile).join(".codex"));
+    }
+    if let (Some(drive), Some(home_path)) = (env::var_os("HOMEDRIVE"), env::var_os("HOMEPATH")) {
+        candidates.push(
+            PathBuf::from(format!(
+                "{}{}",
+                drive.to_string_lossy(),
+                home_path.to_string_lossy()
+            ))
+            .join(".codex"),
+        );
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.to_string_lossy().to_lowercase()))
+        .collect()
+}
+
+fn find_codex_home(settings: &AppSettings) -> PathBuf {
+    let candidates = candidate_codex_homes(settings);
+    if let Some(path) = candidates
+        .iter()
+        .find(|path| path.join("config.toml").is_file())
+    {
+        return path.clone();
+    }
+    if let Some(path) = candidates.iter().find(|path| path.is_dir()) {
+        return path.clone();
+    }
+    candidates
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| PathBuf::from(".codex"))
+}
+
+fn parse_config(path: &Path) -> Result<DocumentMut, String> {
+    if !path.is_file() {
+        return Ok(DocumentMut::new());
+    }
+    let content =
+        fs::read_to_string(path).map_err(|error| format!("读取 Codex 配置失败：{error}"))?;
+    content
+        .trim_start_matches('\u{feff}')
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("Codex 配置不是有效的 TOML：{error}"))
+}
+
+fn array_to_strings(array: &Array) -> Option<Vec<String>> {
+    array
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect()
+}
+
+fn strings_to_array(values: &[String]) -> Array {
+    let mut array = Array::new();
+    for value in values {
+        array.push(value.as_str());
+    }
+    array
+}
+
+fn notify_command(document: &DocumentMut) -> Option<Vec<String>> {
+    document
+        .get("notify")
+        .and_then(Item::as_array)
+        .and_then(array_to_strings)
+}
+
+fn is_manager_command(command: &[String]) -> bool {
+    command.len() >= 2
+        && command[1] == "--notify"
+        && Path::new(&command[0])
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("codex-sound-manager"))
+}
+
+fn is_legacy_sound_command(command: &[String]) -> bool {
+    command.iter().any(|argument| {
+        let normalized = argument.replace('/', "\\").to_ascii_lowercase();
+        normalized.ends_with(".codex\\bin\\task-complete.ps1")
+            || normalized.ends_with(".codex\\bin\\play-task-complete-sound.ps1")
+    })
+}
+
+fn is_computer_use_wrapper(command: &[String]) -> bool {
+    command
+        .first()
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("codex-computer-use.exe"))
+}
+
+fn nested_previous_notifier(command: &[String]) -> Option<(usize, Vec<String>)> {
+    let index = command
+        .iter()
+        .position(|argument| argument == "--previous-notify")?;
+    let json = command.get(index + 1)?;
+    serde_json::from_str::<Vec<String>>(json)
+        .ok()
+        .map(|nested| (index, nested))
+}
+
+fn command_contains_manager(command: &[String]) -> bool {
+    if is_manager_command(command) {
+        return true;
+    }
+    nested_previous_notifier(command)
+        .map(|(_, nested)| is_manager_command(&nested))
+        .unwrap_or(false)
+}
+
+fn install_notify(
+    document: &mut DocumentMut,
+    manager_command: &[String],
+    settings: &mut AppSettings,
+) -> Result<(), String> {
+    let existing = notify_command(document);
+    match existing {
+        Some(mut command) if is_computer_use_wrapper(&command) => {
+            if let Some((index, nested)) = nested_previous_notifier(&command) {
+                if !is_manager_command(&nested) && !is_legacy_sound_command(&nested) {
+                    settings.previous_notifier = Some(nested);
+                } else if is_legacy_sound_command(&nested) {
+                    settings.previous_notifier = None;
+                }
+                command[index + 1] = serde_json::to_string(manager_command)
+                    .map_err(|error| format!("生成通知回调参数失败：{error}"))?;
+            } else {
+                command.push("--previous-notify".to_string());
+                command.push(
+                    serde_json::to_string(manager_command)
+                        .map_err(|error| format!("生成通知回调参数失败：{error}"))?,
+                );
+            }
+            document["notify"] = Item::Value(Value::Array(strings_to_array(&command)));
+        }
+        Some(command) if is_manager_command(&command) => {}
+        Some(command) => {
+            if !is_legacy_sound_command(&command) {
+                settings.previous_notifier = Some(command);
+            } else {
+                settings.previous_notifier = None;
+            }
+            document["notify"] = Item::Value(Value::Array(strings_to_array(manager_command)));
+        }
+        None => {
+            settings.previous_notifier = None;
+            document["notify"] = Item::Value(Value::Array(strings_to_array(manager_command)));
+        }
+    }
+    Ok(())
+}
+
+fn uninstall_notify(
+    document: &mut DocumentMut,
+    settings: &mut AppSettings,
+) -> Result<bool, String> {
+    let Some(mut command) = notify_command(document) else {
+        settings.previous_notifier = None;
+        return Ok(false);
+    };
+
+    if is_computer_use_wrapper(&command) {
+        if let Some((index, nested)) = nested_previous_notifier(&command) {
+            if !is_manager_command(&nested) {
+                return Ok(false);
+            }
+            if let Some(previous) = settings.previous_notifier.as_ref() {
+                command[index + 1] = serde_json::to_string(previous)
+                    .map_err(|error| format!("恢复原通知回调失败：{error}"))?;
+            } else {
+                command.drain(index..=index + 1);
+            }
+            document["notify"] = Item::Value(Value::Array(strings_to_array(&command)));
+            settings.previous_notifier = None;
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+
+    if is_manager_command(&command) {
+        if let Some(previous) = settings.previous_notifier.take() {
+            document["notify"] = Item::Value(Value::Array(strings_to_array(&previous)));
+        } else {
+            document.remove("notify");
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn current_manager_command() -> Result<Vec<String>, String> {
+    let executable = env::current_exe().map_err(|error| format!("无法确定程序路径：{error}"))?;
+    Ok(vec![
+        executable.to_string_lossy().to_string(),
+        "--notify".to_string(),
+    ])
+}
+
+fn write_config(path: &Path, document: &DocumentMut) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建 Codex 配置目录失败：{error}"))?;
+        let backup = parent.join(CONFIG_BACKUP_NAME);
+        if path.is_file() && !backup.exists() {
+            fs::copy(path, &backup).map_err(|error| format!("备份 Codex 配置失败：{error}"))?;
+        }
+    }
+    fs::write(path, document.to_string())
+        .map_err(|error| format!("写入 Codex 全局配置失败：{error}"))
+}
+
+fn scan_internal(settings: AppSettings) -> Result<ScanResult, String> {
+    let codex_home = find_codex_home(&settings);
+    let config_path = codex_home.join("config.toml");
+    let codex_found = codex_home.is_dir();
+    let config_found = config_path.is_file();
+    let configured = if config_found {
+        parse_config(&config_path)
+            .ok()
+            .and_then(|document| notify_command(&document))
+            .map(|command| command_contains_manager(&command))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    let (sound_path, using_default_sound) = resolved_sound(&settings)?;
+    let sound_name = if using_default_sound {
+        "内置默认提示音".to_string()
+    } else {
+        sound_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("自定义提示音")
+            .to_string()
+    };
+    let status_message = if !codex_found {
+        "未发现 Codex 用户目录".to_string()
+    } else if configured {
+        "全局提示音已配置".to_string()
+    } else if config_found {
+        "已发现 Codex，等待应用配置".to_string()
+    } else {
+        "已发现 Codex 用户目录，尚未生成全局配置".to_string()
+    };
+
+    Ok(ScanResult {
+        codex_found,
+        config_found,
+        configured,
+        codex_home: codex_home.to_string_lossy().to_string(),
+        config_path: config_path.to_string_lossy().to_string(),
+        executable_path: env::current_exe()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        sound_name,
+        using_default_sound,
+        settings,
+        status_message,
+    })
+}
+
+#[tauri::command]
+fn scan_codex() -> Result<ScanResult, String> {
+    scan_internal(load_settings()?)
+}
+
+#[tauri::command]
+fn choose_sound() -> Result<Option<SoundSelection>, String> {
+    let selected = rfd::FileDialog::new()
+        .set_title("选择任务完成提示音")
+        .add_filter("音频文件", &["wav", "mp3", "flac", "ogg", "m4a", "aac"])
+        .pick_file();
+    let Some(source) = selected else {
+        return Ok(None);
+    };
+    let metadata = fs::metadata(&source).map_err(|error| format!("读取音频文件失败：{error}"))?;
+    if metadata.len() > MAX_SOUND_BYTES {
+        return Err("音频文件不能超过 50 MB".to_string());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| "无法识别音频文件格式".to_string())?;
+    let destination_dir = app_data_dir()?.join("sounds");
+    fs::create_dir_all(&destination_dir).map_err(|error| format!("创建音频目录失败：{error}"))?;
+    let destination = destination_dir.join(format!("custom-sound.{extension}"));
+    if source != destination {
+        fs::copy(&source, &destination).map_err(|error| format!("导入音频文件失败：{error}"))?;
+    }
+    Ok(Some(SoundSelection {
+        path: destination.to_string_lossy().to_string(),
+        name: source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("自定义提示音")
+            .to_string(),
+    }))
+}
+
+#[tauri::command]
+async fn preview_sound(settings: AppSettings) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || play_sound(&settings))
+        .await
+        .map_err(|error| format!("试听任务执行失败：{error}"))?
+}
+
+#[tauri::command]
+fn apply_configuration(mut settings: AppSettings) -> Result<OperationResult, String> {
+    validate_settings(&settings)?;
+    let codex_home = find_codex_home(&settings);
+    if !codex_home.is_dir() {
+        return Err("未发现 Codex 用户目录，请先启动一次 Codex 后重新扫描".to_string());
+    }
+    let config_path = codex_home.join("config.toml");
+    let mut document = parse_config(&config_path)?;
+    let manager_command = current_manager_command()?;
+    install_notify(&mut document, &manager_command, &mut settings)?;
+    settings.codex_home = Some(codex_home.to_string_lossy().to_string());
+    write_config(&config_path, &document)?;
+    save_settings(&settings)?;
+    Ok(OperationResult {
+        message: "已写入 Codex 全局配置，请完整重启 Codex".to_string(),
+        scan: scan_internal(settings)?,
+    })
+}
+
+#[tauri::command]
+fn remove_configuration() -> Result<OperationResult, String> {
+    let mut settings = load_settings()?;
+    let codex_home = find_codex_home(&settings);
+    let config_path = codex_home.join("config.toml");
+    let mut document = parse_config(&config_path)?;
+    let changed = uninstall_notify(&mut document, &mut settings)?;
+    if changed {
+        write_config(&config_path, &document)?;
+    }
+    save_settings(&settings)?;
+    Ok(OperationResult {
+        message: if changed {
+            "已移除提示音回调，请完整重启 Codex".to_string()
+        } else {
+            "当前 Codex 配置中没有本工具的回调".to_string()
+        },
+        scan: scan_internal(settings)?,
+    })
+}
+
+fn acquire_sound_lock() -> Result<Option<LockGuard>, String> {
+    let directory = app_data_dir()?;
+    fs::create_dir_all(&directory).map_err(|error| format!("创建运行目录失败：{error}"))?;
+    let path = directory.join(LOCK_FILE_NAME);
+    if path.is_file() {
+        let stale = path
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > Duration::from_secs(120));
+        if stale {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{}", std::process::id());
+            Ok(Some(LockGuard { path }))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(format!("创建提示音运行锁失败：{error}")),
+    }
+}
+
+fn append_log(message: &str) {
+    let Ok(directory) = app_data_dir() else {
+        return;
+    };
+    let _ = fs::create_dir_all(&directory);
+    let path = directory.join(LOG_FILE_NAME);
+    if path
+        .metadata()
+        .map(|metadata| metadata.len() > 1024 * 1024)
+        .unwrap_or(false)
+    {
+        let _ = fs::remove_file(&path);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(
+            file,
+            "{} {message}",
+            Local::now().format("%Y-%m-%d %H:%M:%S")
+        );
+    }
+}
+
+fn run_previous_notifier(command: &[String], payload_args: &[String]) -> Result<(), String> {
+    if command.is_empty() || is_manager_command(command) || is_legacy_sound_command(command) {
+        return Ok(());
+    }
+    let mut process = Command::new(&command[0]);
+    process.args(&command[1..]).args(payload_args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        process.creation_flags(0x08000000);
+    }
+    let status = process
+        .status()
+        .map_err(|error| format!("运行原通知回调失败：{error}"))?;
+    if !status.success() {
+        return Err(format!("原通知回调退出码：{}", status.code().unwrap_or(-1)));
+    }
+    Ok(())
+}
+
+fn run_notification(payload_args: &[String]) {
+    let settings = match load_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            append_log(&format!("读取设置失败：{error}"));
+            AppSettings::default()
+        }
+    };
+
+    if let Some(previous) = settings.previous_notifier.as_deref()
+        && let Err(error) = run_previous_notifier(previous, payload_args)
+    {
+        append_log(&error);
+    }
+    if !settings.enabled {
+        append_log("中文动态日志：任务完成，提示音当前已关闭");
+        return;
+    }
+    let Ok(Some(_lock)) = acquire_sound_lock() else {
+        return;
+    };
+    match play_sound(&settings) {
+        Ok(()) => append_log(&format!(
+            "中文动态日志：任务完成，提示音已播放 {} 次",
+            settings.play_count
+        )),
+        Err(error) => append_log(&format!("播放失败：{error}")),
+    }
+}
+
+fn main() {
+    let arguments: Vec<String> = env::args().collect();
+    if let Some(index) = arguments.iter().position(|argument| argument == "--notify") {
+        run_notification(&arguments[index + 1..]);
+        return;
+    }
+
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            scan_codex,
+            choose_sound,
+            preview_sound,
+            apply_configuration,
+            remove_configuration
+        ])
+        .run(tauri::generate_context!())
+        .expect("启动 Codex 提示音管理器失败");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager_command() -> Vec<String> {
+        vec![
+            r"C:\Program Files\Codex Sound Manager\codex-sound-manager.exe".to_string(),
+            "--notify".to_string(),
+        ]
+    }
+
+    #[test]
+    fn installs_and_restores_plain_notifier_without_losing_comments() {
+        let mut document = r#"# 中文注释
+model = "gpt-test"
+notify = ["notify-send", "Codex"]
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let mut settings = AppSettings::default();
+        install_notify(&mut document, &manager_command(), &mut settings).unwrap();
+        assert!(command_contains_manager(
+            &notify_command(&document).unwrap()
+        ));
+        assert!(document.to_string().contains("# 中文注释"));
+        assert_eq!(
+            settings.previous_notifier.as_ref().unwrap()[0],
+            "notify-send"
+        );
+
+        assert!(uninstall_notify(&mut document, &mut settings).unwrap());
+        assert_eq!(notify_command(&document).unwrap()[0], "notify-send");
+    }
+
+    #[test]
+    fn updates_computer_use_previous_notifier_in_place() {
+        let previous = serde_json::to_string(&vec!["notify-send", "Codex"]).unwrap();
+        let source = format!(
+            "notify = ['C:\\\\Codex\\\\codex-computer-use.exe', 'turn-ended', '--previous-notify', '{}']\n",
+            previous.replace('\\', "\\\\").replace('\'', "\\'")
+        );
+        let mut document = source.parse::<DocumentMut>().unwrap();
+        let mut settings = AppSettings::default();
+        install_notify(&mut document, &manager_command(), &mut settings).unwrap();
+        let command = notify_command(&document).unwrap();
+        assert!(is_computer_use_wrapper(&command));
+        assert!(command_contains_manager(&command));
+        assert_eq!(
+            settings.previous_notifier.as_ref().unwrap()[0],
+            "notify-send"
+        );
+
+        assert!(uninstall_notify(&mut document, &mut settings).unwrap());
+        let restored = notify_command(&document).unwrap();
+        assert_eq!(
+            nested_previous_notifier(&restored).unwrap().1[0],
+            "notify-send"
+        );
+    }
+
+    #[test]
+    fn ignores_legacy_personal_sound_script() {
+        let mut document = r#"notify = ["powershell.exe", "-File", "C:\\Users\\demo\\.codex\\bin\\task-complete.ps1"]
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let mut settings = AppSettings::default();
+        install_notify(&mut document, &manager_command(), &mut settings).unwrap();
+        assert!(settings.previous_notifier.is_none());
+    }
+}
