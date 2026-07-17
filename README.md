@@ -31,7 +31,7 @@
 | 自定义声音 | 支持 WAV、MP3、FLAC、OGG、M4A、AAC，最大 50 MB，选择器默认打开声音库 |
 | 播放次数 | 每次任务完成可连续播放 1–10 次 |
 | 系统托盘 | 关闭主窗口时可选择退出程序或继续在托盘运行，托盘菜单可恢复窗口和切换状态 |
-| 桌面悬浮球 | 科技球体可按需显示，整颗球任意位置都能顺滑拖动，并可一键开关提示音 |
+| 桌面悬浮球 | 科技球体可按需显示，整颗球任意位置都能顺滑拖动，并可双击开关提示音 |
 | 原创默认音频 | `sounds/default-notification.wav` 随项目公开分发 |
 | 安全修改配置 | 使用 `toml_edit` 保留原 TOML 的注释、顺序和其他字段 |
 | 保留已有回调 | 兼容 Codex Computer Use 的 `--previous-notify` 包装 |
@@ -64,8 +64,8 @@ codex-sound-manager.exe
 
 - 点击主窗口的关闭按钮后，可以选择 **退出程序**、**最小化到托盘** 或 **取消**。
 - 左键点击托盘图标可恢复主窗口；右键菜单可切换提示音、显示或隐藏悬浮球，也可彻底退出程序。
-- 在主界面开启 **桌面悬浮球** 后，短按球体可立即开启或关闭提示音；按住球体任意位置拖动即可调整位置；右键点击可打开主窗口。
-- 拖动使用 Tauri 调用 Windows 原生窗口拖动，不经过 WebView 逐帧坐标和 IPC 队列，因此球体会直接跟随系统鼠标；拖动不会误触提示音开关。
+- 在主界面开启 **桌面悬浮球** 后，双击球体可立即开启或关闭提示音；按住球体任意位置拖动即可调整位置；右键点击可打开主窗口。单击不会切换提示音，避免轻微拖动误触。
+- 球体会先识别双击，再调用 Tauri 的 `startDragging()` 交给 Windows 原生窗口拖动；移动过程不经过 WebView 逐帧坐标和 IPC 队列，因此会直接跟随系统鼠标，拖动也不会误触提示音开关。
 - 主窗口、悬浮球和托盘中的提示音开关都会立即保存，下一次任务完成直接生效，不需要点击 **应用到 Codex**，也不需要重启 Codex。
 - 修改播放次数或提示音文件后仍需点击一次 **应用到 Codex**；如果全局回调已经配置，这些设置同样无需重启 Codex。
 
@@ -109,8 +109,8 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.5_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.5_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.6_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.6_x64-portable.zip` |
 | SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。

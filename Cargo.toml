@@ -1,6 +1,6 @@
 [package]
 name = "codex-sound-manager"
-version = "1.3.5"
+version = "1.3.6"
 edition = "2024"
 description = "Global task completion sound manager for Codex on Windows"
 license = "MIT"

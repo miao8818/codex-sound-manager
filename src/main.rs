@@ -1343,6 +1343,15 @@ notify = ["notify-send", "Codex"]
     }
 
     #[test]
+    fn preserves_chinese_double_click_ui_guidance() {
+        let floating_source = include_str!("../frontend/floating.tsx");
+        assert!(floating_source.contains("提示音已开启，双击关闭"));
+        assert!(floating_source.contains("startDragging()"));
+        assert!(!floating_source.contains("data-tauri-drag-region"));
+        assert!(include_str!("../frontend/app.tsx").contains("已显示，双击球体切换提示音"));
+    }
+
+    #[test]
     fn validates_supported_audio_extensions_case_insensitively() {
         assert!(is_supported_sound_file(Path::new("notice.MP3")));
         assert!(!is_supported_sound_file(Path::new("notice.exe")));

@@ -345,7 +345,7 @@ export default function App() {
                   <CircleDot className="size-[18px] text-[#2563eb]" aria-hidden="true" />
                   <h2 className="text-sm font-bold">桌面悬浮球</h2>
                 </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">{settings.floatingBallEnabled ? '已显示，可快速切换提示音' : '当前已隐藏'}</p>
+                <p className="mt-1.5 text-xs text-muted-foreground">{settings.floatingBallEnabled ? '已显示，双击球体切换提示音' : '当前已隐藏'}</p>
               </div>
               <Switch
                 checked={settings.floatingBallEnabled}
