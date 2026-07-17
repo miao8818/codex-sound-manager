@@ -65,7 +65,7 @@ You can also double-click `Run-Portable.vbs` in the same directory. In a source 
 - Closing the main window offers **Quit**, **Minimize to tray**, and **Cancel**.
 - Left-click the tray icon to restore the main window. Its context menu can switch the sound, show or hide the floating control, or quit the app.
 - Enable **Desktop floating control** in the main window, then short-click the orb to switch completion sounds instantly. Hold and drag from any point on the orb to move it, or right-click it to open the main window.
-- Dragging uses DPI-scaled absolute displacement, so it starts without a jump and delayed frames cannot accumulate drift; moving beyond the threshold also never toggles sound by mistake.
+- Dragging uses the DPI-scaled total displacement from the pointer-down point and keeps only the newest pending frame, so it starts without a jump and never falls progressively behind on long moves; crossing the threshold also never toggles sound by mistake.
 - Sound switches in the main window, floating control, and tray are saved immediately and take effect on the next completed task; **Apply to Codex** and a Codex restart are not required.
 - Repeat-count and sound-file changes still require one click on **Apply to Codex**. If the global callback is already configured, those settings do not require a Codex restart either.
 
@@ -105,8 +105,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.3_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.3_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.4_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.4_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.

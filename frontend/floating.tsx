@@ -24,7 +24,10 @@ type FloatingGesture = {
   moved: boolean
   finishing: boolean
   animationFrame: number | null
-  commandChain: Promise<unknown>
+  beginPromise: Promise<unknown>
+  updatePromise: Promise<void> | null
+  updateQueued: boolean
+  error: unknown | null
 }
 
 const DRAG_THRESHOLD_PX = 3
@@ -76,14 +79,28 @@ function FloatingBall() {
   }
 
   const queuePositionUpdate = (gesture: FloatingGesture) => {
-    if (gesture.animationFrame !== null) return
+    gesture.updateQueued = true
+    if (gesture.animationFrame !== null || gesture.updatePromise || gesture.error !== null) return
     gesture.animationFrame = requestAnimationFrame(() => {
       gesture.animationFrame = null
-      const { deltaX, deltaY } = gesture
-      gesture.commandChain = gesture.commandChain.then(() => invoke('update_floating_drag', {
-        deltaX,
-        deltaY,
-      }))
+      if (gesture.updatePromise || gesture.finishing || gesture.error !== null) return
+      gesture.updatePromise = (async () => {
+        try {
+          await gesture.beginPromise
+          while (gesture.updateQueued && !gesture.finishing) {
+            gesture.updateQueued = false
+            const { deltaX, deltaY } = gesture
+            await invoke('update_floating_drag', { deltaX, deltaY })
+          }
+        } catch (error) {
+          gesture.error = error
+        }
+      })().finally(() => {
+        gesture.updatePromise = null
+        if (gesture.updateQueued && !gesture.finishing && gesture.error === null) {
+          queuePositionUpdate(gesture)
+        }
+      })
     })
   }
 
@@ -100,7 +117,10 @@ function FloatingBall() {
       moved: false,
       finishing: false,
       animationFrame: null,
-      commandChain: invoke('begin_floating_drag'),
+      beginPromise: invoke('begin_floating_drag'),
+      updatePromise: null,
+      updateQueued: false,
+      error: null,
     }
     setDragging(true)
   }
@@ -124,6 +144,7 @@ function FloatingBall() {
     if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
     event.preventDefault()
     gesture.finishing = true
+    gesture.updateQueued = false
     gesture.deltaX = event.screenX - gesture.startX
     gesture.deltaY = event.screenY - gesture.startY
     gesture.moved ||= Math.hypot(gesture.deltaX, gesture.deltaY) >= DRAG_THRESHOLD_PX
@@ -135,7 +156,13 @@ function FloatingBall() {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     try {
-      await gesture.commandChain
+      await gesture.beginPromise
+      if (gesture.updatePromise) {
+        await gesture.updatePromise
+      }
+      if (gesture.error !== null) {
+        throw gesture.error
+      }
       if (gesture.moved) {
         await invoke('update_floating_drag', {
           deltaX: gesture.deltaX,
