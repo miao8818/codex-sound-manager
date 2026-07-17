@@ -65,7 +65,7 @@ codex-sound-manager.exe
 - 点击主窗口的关闭按钮后，可以选择 **退出程序**、**最小化到托盘** 或 **取消**。
 - 左键点击托盘图标可恢复主窗口；右键菜单可切换提示音、显示或隐藏悬浮球，也可彻底退出程序。
 - 在主界面开启 **桌面悬浮球** 后，短按球体可立即开启或关闭提示音；按住球体任意位置拖动即可调整位置；右键点击可打开主窗口。
-- 拖动超过操作阈值后不会误触提示音开关，球体之外的窗口区域保持透明。
+- 拖动使用经过 DPI 缩放的绝对位移，起步不会跳动，延迟帧不会累积偏差；超过操作阈值后也不会误触提示音开关。
 - 主窗口、悬浮球和托盘中的提示音开关都会立即保存，下一次任务完成直接生效，不需要点击 **应用到 Codex**，也不需要重启 Codex。
 - 修改播放次数或提示音文件后仍需点击一次 **应用到 Codex**；如果全局回调已经配置，这些设置同样无需重启 Codex。
 
@@ -109,8 +109,8 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.2_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.2_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.3_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.3_x64-portable.zip` |
 | SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。

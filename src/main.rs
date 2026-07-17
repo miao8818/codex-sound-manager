@@ -107,7 +107,7 @@ struct FloatingPrimaryAction {
 #[derive(Clone, Copy, Debug)]
 struct FloatingDragSession {
     window_position: PhysicalPosition<i32>,
-    cursor_position: PhysicalPosition<f64>,
+    scale_factor: f64,
     moved: bool,
 }
 
@@ -903,14 +903,15 @@ fn ensure_floating_window(window: &tauri::WebviewWindow) -> Result<(), String> {
 
 fn floating_drag_target(
     session: &mut FloatingDragSession,
-    cursor_position: PhysicalPosition<f64>,
+    delta_x: f64,
+    delta_y: f64,
 ) -> PhysicalPosition<i32> {
-    let delta_x = (cursor_position.x - session.cursor_position.x).round() as i64;
-    let delta_y = (cursor_position.y - session.cursor_position.y).round() as i64;
-    session.moved |= delta_x * delta_x + delta_y * delta_y >= 9;
-    let target_x = (i64::from(session.window_position.x) + delta_x)
+    let physical_delta_x = (delta_x * session.scale_factor).round() as i64;
+    let physical_delta_y = (delta_y * session.scale_factor).round() as i64;
+    session.moved |= physical_delta_x * physical_delta_x + physical_delta_y * physical_delta_y >= 9;
+    let target_x = (i64::from(session.window_position.x) + physical_delta_x)
         .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-    let target_y = (i64::from(session.window_position.y) + delta_y)
+    let target_y = (i64::from(session.window_position.y) + physical_delta_y)
         .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
     PhysicalPosition::new(target_x, target_y)
 }
@@ -919,30 +920,21 @@ fn floating_drag_target(
 fn begin_floating_drag(
     window: tauri::WebviewWindow,
     drag_state: State<'_, FloatingDragState>,
-    pointer_x: f64,
-    pointer_y: f64,
 ) -> Result<(), String> {
     ensure_floating_window(&window)?;
-    if !pointer_x.is_finite() || !pointer_y.is_finite() {
-        return Err("悬浮球拖动起点无效".to_string());
-    }
     let window_position = window
         .outer_position()
         .map_err(|error| format!("读取悬浮球位置失败：{error}"))?;
     let scale_factor = window
         .scale_factor()
         .map_err(|error| format!("读取显示缩放比例失败：{error}"))?;
-    let cursor_position = PhysicalPosition::new(
-        f64::from(window_position.x) + pointer_x * scale_factor,
-        f64::from(window_position.y) + pointer_y * scale_factor,
-    );
     let mut session = drag_state
         .session
         .lock()
         .map_err(|_| "悬浮球拖动状态不可用".to_string())?;
     *session = Some(FloatingDragSession {
         window_position,
-        cursor_position,
+        scale_factor,
         moved: false,
     });
     Ok(())
@@ -952,11 +944,13 @@ fn begin_floating_drag(
 fn update_floating_drag(
     window: tauri::WebviewWindow,
     drag_state: State<'_, FloatingDragState>,
+    delta_x: f64,
+    delta_y: f64,
 ) -> Result<bool, String> {
     ensure_floating_window(&window)?;
-    let cursor_position = window
-        .cursor_position()
-        .map_err(|error| format!("读取鼠标位置失败：{error}"))?;
+    if !delta_x.is_finite() || !delta_y.is_finite() {
+        return Err("悬浮球拖动位移无效".to_string());
+    }
     let (target_position, moved) = {
         let mut state = drag_state
             .session
@@ -965,7 +959,7 @@ fn update_floating_drag(
         let session = state
             .as_mut()
             .ok_or_else(|| "悬浮球拖动尚未开始".to_string())?;
-        let target_position = floating_drag_target(session, cursor_position);
+        let target_position = floating_drag_target(session, delta_x, delta_y);
         (target_position, session.moved)
     };
     window
@@ -1479,19 +1473,23 @@ notify = ["notify-send", "Codex"]
     }
 
     #[test]
-    fn floating_drag_uses_physical_cursor_delta_and_threshold() {
+    fn floating_drag_starts_without_a_jump_and_uses_scaled_absolute_delta() {
         let mut session = FloatingDragSession {
             window_position: PhysicalPosition::new(100, 200),
-            cursor_position: PhysicalPosition::new(50.0, 80.0),
+            scale_factor: 1.5,
             moved: false,
         };
 
-        let nearby = floating_drag_target(&mut session, PhysicalPosition::new(52.0, 81.0));
-        assert_eq!((nearby.x, nearby.y), (102, 201));
+        let initial = floating_drag_target(&mut session, 0.0, 0.0);
+        assert_eq!((initial.x, initial.y), (100, 200));
         assert!(!session.moved);
 
-        let moved = floating_drag_target(&mut session, PhysicalPosition::new(90.0, 120.0));
-        assert_eq!((moved.x, moved.y), (140, 240));
+        let nearby = floating_drag_target(&mut session, 1.0, 0.0);
+        assert_eq!((nearby.x, nearby.y), (102, 200));
+        assert!(!session.moved);
+
+        let moved = floating_drag_target(&mut session, 20.0, -10.0);
+        assert_eq!((moved.x, moved.y), (130, 185));
         assert!(session.moved);
     }
 

@@ -19,6 +19,8 @@ type FloatingGesture = {
   pointerId: number
   startX: number
   startY: number
+  deltaX: number
+  deltaY: number
   moved: boolean
   finishing: boolean
   animationFrame: number | null
@@ -77,7 +79,11 @@ function FloatingBall() {
     if (gesture.animationFrame !== null) return
     gesture.animationFrame = requestAnimationFrame(() => {
       gesture.animationFrame = null
-      gesture.commandChain = gesture.commandChain.then(() => invoke('update_floating_drag'))
+      const { deltaX, deltaY } = gesture
+      gesture.commandChain = gesture.commandChain.then(() => invoke('update_floating_drag', {
+        deltaX,
+        deltaY,
+      }))
     })
   }
 
@@ -89,13 +95,12 @@ function FloatingBall() {
       pointerId: event.pointerId,
       startX: event.screenX,
       startY: event.screenY,
+      deltaX: 0,
+      deltaY: 0,
       moved: false,
       finishing: false,
       animationFrame: null,
-      commandChain: invoke('begin_floating_drag', {
-        pointerX: event.clientX,
-        pointerY: event.clientY,
-      }),
+      commandChain: invoke('begin_floating_drag'),
     }
     setDragging(true)
   }
@@ -103,11 +108,9 @@ function FloatingBall() {
   const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     const gesture = gestureRef.current
     if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
-    const moved = Math.hypot(
-      event.screenX - gesture.startX,
-      event.screenY - gesture.startY,
-    ) >= DRAG_THRESHOLD_PX
-    gesture.moved ||= moved
+    gesture.deltaX = event.screenX - gesture.startX
+    gesture.deltaY = event.screenY - gesture.startY
+    gesture.moved ||= Math.hypot(gesture.deltaX, gesture.deltaY) >= DRAG_THRESHOLD_PX
     if (gesture.moved) {
       queuePositionUpdate(gesture)
     }
@@ -121,11 +124,9 @@ function FloatingBall() {
     if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
     event.preventDefault()
     gesture.finishing = true
-    const moved = Math.hypot(
-      event.screenX - gesture.startX,
-      event.screenY - gesture.startY,
-    ) >= DRAG_THRESHOLD_PX
-    gesture.moved ||= moved
+    gesture.deltaX = event.screenX - gesture.startX
+    gesture.deltaY = event.screenY - gesture.startY
+    gesture.moved ||= Math.hypot(gesture.deltaX, gesture.deltaY) >= DRAG_THRESHOLD_PX
     if (gesture.animationFrame !== null) {
       cancelAnimationFrame(gesture.animationFrame)
       gesture.animationFrame = null
@@ -136,7 +137,10 @@ function FloatingBall() {
     try {
       await gesture.commandChain
       if (gesture.moved) {
-        await invoke('update_floating_drag')
+        await invoke('update_floating_drag', {
+          deltaX: gesture.deltaX,
+          deltaY: gesture.deltaY,
+        })
       }
       const result = await invoke<FloatingPrimaryAction>('end_floating_drag', {
         shouldToggle: !cancelled && !gesture.moved && !busy,
