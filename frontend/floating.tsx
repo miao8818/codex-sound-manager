@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { Code2, Volume2, VolumeX } from 'lucide-react'
@@ -10,33 +10,9 @@ type RuntimePreferences = {
   floatingBallEnabled: boolean
 }
 
-type FloatingPrimaryAction = {
-  moved: boolean
-  soundEnabled: boolean
-}
-
-type FloatingGesture = {
-  pointerId: number
-  startX: number
-  startY: number
-  deltaX: number
-  deltaY: number
-  moved: boolean
-  finishing: boolean
-  animationFrame: number | null
-  beginPromise: Promise<unknown>
-  updatePromise: Promise<void> | null
-  updateQueued: boolean
-  error: unknown | null
-}
-
-const DRAG_THRESHOLD_PX = 3
-
 function FloatingBall() {
   const [enabled, setEnabled] = useState(true)
   const [busy, setBusy] = useState(true)
-  const [dragging, setDragging] = useState(false)
-  const gestureRef = useRef<FloatingGesture | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -73,115 +49,21 @@ function FloatingBall() {
     }
   }, [])
 
+  const toggleSound = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      setEnabled(await invoke<boolean>('toggle_sound_enabled'))
+    } catch {
+      return
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const showMainWindow = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     void invoke('show_main_window').catch(() => undefined)
-  }
-
-  const queuePositionUpdate = (gesture: FloatingGesture) => {
-    gesture.updateQueued = true
-    if (gesture.animationFrame !== null || gesture.updatePromise || gesture.error !== null) return
-    gesture.animationFrame = requestAnimationFrame(() => {
-      gesture.animationFrame = null
-      if (gesture.updatePromise || gesture.finishing || gesture.error !== null) return
-      gesture.updatePromise = (async () => {
-        try {
-          await gesture.beginPromise
-          while (gesture.updateQueued && !gesture.finishing) {
-            gesture.updateQueued = false
-            const { deltaX, deltaY } = gesture
-            await invoke('update_floating_drag', { deltaX, deltaY })
-          }
-        } catch (error) {
-          gesture.error = error
-        }
-      })().finally(() => {
-        gesture.updatePromise = null
-        if (gesture.updateQueued && !gesture.finishing && gesture.error === null) {
-          queuePositionUpdate(gesture)
-        }
-      })
-    })
-  }
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || gestureRef.current) return
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    gestureRef.current = {
-      pointerId: event.pointerId,
-      startX: event.screenX,
-      startY: event.screenY,
-      deltaX: 0,
-      deltaY: 0,
-      moved: false,
-      finishing: false,
-      animationFrame: null,
-      beginPromise: invoke('begin_floating_drag'),
-      updatePromise: null,
-      updateQueued: false,
-      error: null,
-    }
-    setDragging(true)
-  }
-
-  const handlePointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const gesture = gestureRef.current
-    if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
-    gesture.deltaX = event.screenX - gesture.startX
-    gesture.deltaY = event.screenY - gesture.startY
-    gesture.moved ||= Math.hypot(gesture.deltaX, gesture.deltaY) >= DRAG_THRESHOLD_PX
-    if (gesture.moved) {
-      queuePositionUpdate(gesture)
-    }
-  }
-
-  const finishGesture = async (
-    event: React.PointerEvent<HTMLButtonElement>,
-    cancelled: boolean,
-  ) => {
-    const gesture = gestureRef.current
-    if (!gesture || gesture.pointerId !== event.pointerId || gesture.finishing) return
-    event.preventDefault()
-    gesture.finishing = true
-    gesture.updateQueued = false
-    gesture.deltaX = event.screenX - gesture.startX
-    gesture.deltaY = event.screenY - gesture.startY
-    gesture.moved ||= Math.hypot(gesture.deltaX, gesture.deltaY) >= DRAG_THRESHOLD_PX
-    if (gesture.animationFrame !== null) {
-      cancelAnimationFrame(gesture.animationFrame)
-      gesture.animationFrame = null
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    try {
-      await gesture.beginPromise
-      if (gesture.updatePromise) {
-        await gesture.updatePromise
-      }
-      if (gesture.error !== null) {
-        throw gesture.error
-      }
-      if (gesture.moved) {
-        await invoke('update_floating_drag', {
-          deltaX: gesture.deltaX,
-          deltaY: gesture.deltaY,
-        })
-      }
-      const result = await invoke<FloatingPrimaryAction>('end_floating_drag', {
-        shouldToggle: !cancelled && !gesture.moved && !busy,
-      })
-      setEnabled(result.soundEnabled)
-    } catch {
-      void invoke('end_floating_drag', { shouldToggle: false }).catch(() => undefined)
-      return
-    } finally {
-      if (gestureRef.current === gesture) {
-        gestureRef.current = null
-      }
-      setDragging(false)
-    }
   }
 
   const label = enabled ? '提示音已开启，点击关闭' : '提示音已关闭，点击开启'
@@ -190,12 +72,10 @@ function FloatingBall() {
   return (
     <div className="floating-stage">
       <button
-        className={`floating-orb ${enabled ? 'is-enabled' : 'is-disabled'} ${dragging ? 'is-dragging' : ''}`}
+        className={`floating-orb ${enabled ? 'is-enabled' : 'is-disabled'}`}
+        data-tauri-drag-region="deep"
         onContextMenu={showMainWindow}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={(event) => void finishGesture(event, false)}
-        onPointerCancel={(event) => void finishGesture(event, true)}
+        onClick={() => void toggleSound()}
         aria-label={label}
         aria-pressed={enabled}
         aria-disabled={busy}

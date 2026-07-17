@@ -116,12 +116,8 @@ button {
   transform: scale(1.015);
 }
 
-.floating-orb.is-dragging {
+.floating-orb:active {
   cursor: grabbing;
-}
-
-.floating-orb.is-dragging .orb-shell {
-  transform: scale(0.965);
 }
 
 .floating-orb:focus-visible .orb-shell {
