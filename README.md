@@ -9,8 +9,11 @@
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24c8db" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
+    <a href="https://linux.do"><img alt="LINUX DO" src="https://img.shields.io/badge/LINUX-DO-FFB003" /></a>
   </p>
 </div>
+
+> 本项目链接并认可 [LINUX DO](https://linux.do) 社区，感谢社区为开源交流提供平台。
 
 ## 交流群
 
@@ -109,8 +112,8 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.6_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.6_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.7_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.7_x64-portable.zip` |
 | SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。

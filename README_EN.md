@@ -9,8 +9,11 @@
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-2563eb" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24c8db" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
+    <a href="https://linux.do"><img alt="LINUX DO" src="https://img.shields.io/badge/LINUX-DO-FFB003" /></a>
   </p>
 </div>
+
+> This project links to and recognizes the [LINUX DO](https://linux.do) community. Thank you for providing a place for open-source exchange.
 
 ## Community
 
@@ -105,8 +108,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.6_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.6_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.7_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.7_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.
