@@ -38,6 +38,7 @@
 | 原创默认音频 | `sounds/default-notification.wav` 随项目公开分发 |
 | 安全修改配置 | 使用 `toml_edit` 保留原 TOML 的注释、顺序和其他字段 |
 | 保留已有回调 | 兼容 Codex Computer Use 的 `--previous-notify` 包装 |
+| 只提示主任务 | 自动忽略子智能体完成事件，以及尚未完成的 `/goal` 中间回合 |
 | 可随时恢复 | 移除工具配置时恢复安装前的原通知回调 |
 | 联系开发者 | 点击窗口底部的小按钮即可查看交流群二维码 |
 | 安静运行 | Release 和通知模式不显示黑色控制台窗口 |
@@ -71,6 +72,7 @@ codex-sound-manager.exe
 - 球体会先识别双击，再调用 Tauri 的 `startDragging()` 交给 Windows 原生窗口拖动；移动过程不经过 WebView 逐帧坐标和 IPC 队列，因此会直接跟随系统鼠标，拖动也不会误触提示音开关。
 - 主窗口、悬浮球和托盘中的提示音开关都会立即保存，下一次任务完成直接生效，不需要点击 **应用到 Codex**，也不需要重启 Codex。
 - 修改播放次数或提示音文件后仍需点击一次 **应用到 Codex**；如果全局回调已经配置，这些设置同样无需重启 Codex。
+- 通知程序会解析 Codex 的事件类型和线程编号，并通过本地只读状态库过滤子智能体；`/goal` 仍为活动、暂停、阻塞或受限状态时不会播放。状态库暂时不可用时会保留主任务提示，并把兼容回退原因写入日志。
 
 ## 从源码启动
 
@@ -112,8 +114,8 @@ Build-Release.cmd
 | 产物 | 路径 |
 |---|---|
 | 便携 EXE | `target\release\codex-sound-manager.exe` |
-| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.7_x64-setup.exe` |
-| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.7_x64-portable.zip` |
+| NSIS 安装包 | `target\release\bundle\release\CodexSoundManager_1.3.8_x64-setup.exe` |
+| 便携 ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.8_x64-portable.zip` |
 | SHA-256 校验 | `target\release\bundle\release\SHA256SUMS.txt` |
 
 构建环境需要 Node.js、Rust、Microsoft C++ Build Tools 和 WebView2。

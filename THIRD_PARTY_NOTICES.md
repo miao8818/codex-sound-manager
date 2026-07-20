@@ -16,6 +16,8 @@
 - Radix UI: MIT
 - Lucide: ISC
 - rodio: Apache-2.0 OR MIT
+- rusqlite: MIT
+- SQLite: Public Domain
 - toml_edit: Apache-2.0 OR MIT
 
 `sounds/default-notification.wav` 由本项目脚本原创生成，随项目 MIT 许可分发，不包含 Windows 系统音频。

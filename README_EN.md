@@ -38,6 +38,7 @@ Scan the QR code to contact the developer, report issues, or join Codex discussi
 | Original default sound | `sounds/default-notification.wav` is safe to redistribute with the project |
 | Format-preserving edits | Uses `toml_edit` to preserve comments, ordering and unrelated settings |
 | Existing callback support | Preserves existing notifiers and Codex Computer Use `--previous-notify` wrappers |
+| Main-task notifications | Automatically ignores subagent completions and intermediate turns from unfinished `/goal` work |
 | Reversible setup | Removes this integration and restores the previous notifier |
 | Developer contact | Open the community QR code from the small button in the window footer |
 | Quiet runtime | Release and notification modes never open a console window |
@@ -71,6 +72,7 @@ You can also double-click `Run-Portable.vbs` in the same directory. In a source 
 - The orb classifies a double-click first, then calls Tauri's `startDragging()` for native Windows window movement. Motion never passes through WebView coordinate frames or an IPC queue, so it follows the system cursor directly without toggling sound by mistake.
 - Sound switches in the main window, floating control, and tray are saved immediately and take effect on the next completed task; **Apply to Codex** and a Codex restart are not required.
 - Repeat-count and sound-file changes still require one click on **Apply to Codex**. If the global callback is already configured, those settings do not require a Codex restart either.
+- The notifier parses Codex event and thread identifiers, then reads local Codex state in read-only mode to ignore subagents. It also skips `/goal` turns while the goal is active, paused, blocked, or limited. If local state is temporarily unavailable, main-task notifications remain enabled and the compatibility fallback is recorded in the log.
 
 ## Run from Source
 
@@ -108,8 +110,8 @@ The script first verifies that every project version matches, then installs fron
 | Artifact | Path |
 |---|---|
 | Portable EXE | `target\release\codex-sound-manager.exe` |
-| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.7_x64-setup.exe` |
-| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.7_x64-portable.zip` |
+| NSIS installer | `target\release\bundle\release\CodexSoundManager_1.3.8_x64-setup.exe` |
+| Portable ZIP | `target\release\bundle\portable\CodexSoundManager_1.3.8_x64-portable.zip` |
 | SHA-256 checksums | `target\release\bundle\release\SHA256SUMS.txt` |
 
 The build environment requires Node.js, Rust, Microsoft C++ Build Tools and WebView2.

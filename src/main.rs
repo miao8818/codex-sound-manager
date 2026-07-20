@@ -2,7 +2,9 @@
 
 use chrono::Local;
 use rodio::{Decoder, OutputStreamBuilder, Sink};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -101,6 +103,49 @@ enum CloseChoice {
     Exit,
     MinimizeToTray,
     Cancel,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexNotificationPayload {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(rename = "thread-id")]
+    thread_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThreadKind {
+    Main,
+    Subagent,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DatabaseLookup<T> {
+    Found(T),
+    Missing,
+    Unavailable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NotificationDecision {
+    should_play: bool,
+    log_messages: Vec<String>,
+}
+
+impl NotificationDecision {
+    fn play(log_messages: Vec<String>) -> Self {
+        Self {
+            should_play: true,
+            log_messages,
+        }
+    }
+
+    fn skip(message: impl Into<String>) -> Self {
+        Self {
+            should_play: false,
+            log_messages: vec![message.into()],
+        }
+    }
 }
 
 impl TryFrom<&str> for CloseChoice {
@@ -1018,6 +1063,242 @@ fn run_previous_notifier(command: &[String], payload_args: &[String]) -> Result<
     Ok(())
 }
 
+fn versioned_database_paths(codex_home: &Path, prefix: &str) -> Result<Vec<PathBuf>, String> {
+    let entries =
+        fs::read_dir(codex_home).map_err(|error| format!("无法扫描 Codex 状态目录：{error}"))?;
+    let mut databases = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let version = name
+                .strip_prefix(prefix)?
+                .strip_suffix(".sqlite")?
+                .parse::<u32>()
+                .ok()?;
+            Some((version, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    databases.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    Ok(databases.into_iter().map(|(_, path)| path).collect())
+}
+
+fn open_readonly_database(path: &Path) -> Result<Connection, String> {
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("无法只读打开 Codex 状态库：{error}"))?;
+    connection
+        .busy_timeout(Duration::from_millis(250))
+        .map_err(|error| format!("无法设置 Codex 状态库读取超时：{error}"))?;
+    Ok(connection)
+}
+
+fn table_columns(connection: &Connection, table: &str) -> Result<HashSet<String>, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("无法读取 Codex 状态库结构：{error}"))?;
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("无法查询 Codex 状态库结构：{error}"))?;
+    names
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| format!("无法解析 Codex 状态库结构：{error}"))
+}
+
+fn json_value_is_subagent(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(value) => value.eq_ignore_ascii_case("subagent"),
+        JsonValue::Array(values) => values.iter().any(json_value_is_subagent),
+        JsonValue::Object(values) => values.iter().any(|(key, value)| {
+            key.replace(['-', '_'], "").eq_ignore_ascii_case("subagent")
+                || json_value_is_subagent(value)
+        }),
+        _ => false,
+    }
+}
+
+fn source_is_subagent(source: &str) -> bool {
+    serde_json::from_str::<JsonValue>(source).is_ok_and(|value| json_value_is_subagent(&value))
+}
+
+fn classify_thread_in_database(
+    connection: &Connection,
+    thread_id: &str,
+) -> Result<Option<ThreadKind>, String> {
+    let edge_columns = table_columns(connection, "thread_spawn_edges")?;
+    if edge_columns.contains("child_thread_id") {
+        let is_child = connection
+            .query_row(
+                "SELECT 1 FROM thread_spawn_edges WHERE child_thread_id = ?1 LIMIT 1",
+                [thread_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|error| format!("无法查询 Codex 子智能体关系：{error}"))?
+            .is_some();
+        if is_child {
+            return Ok(Some(ThreadKind::Subagent));
+        }
+    }
+
+    let thread_columns = table_columns(connection, "threads")?;
+    if !thread_columns.contains("id") {
+        return Ok(None);
+    }
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM threads WHERE id = ?1 LIMIT 1",
+            [thread_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| format!("无法查询 Codex 线程：{error}"))?
+        .is_some();
+    if !exists {
+        return Ok(None);
+    }
+
+    if thread_columns.contains("thread_source") {
+        let thread_source = connection
+            .query_row(
+                "SELECT thread_source FROM threads WHERE id = ?1 LIMIT 1",
+                [thread_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("无法读取 Codex 线程来源：{error}"))?
+            .flatten();
+        if thread_source
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("subagent"))
+        {
+            return Ok(Some(ThreadKind::Subagent));
+        }
+    }
+
+    if thread_columns.contains("source") {
+        let source = connection
+            .query_row(
+                "SELECT source FROM threads WHERE id = ?1 LIMIT 1",
+                [thread_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("无法读取 Codex 线程来源详情：{error}"))?
+            .flatten();
+        if source.as_deref().is_some_and(source_is_subagent) {
+            return Ok(Some(ThreadKind::Subagent));
+        }
+    }
+
+    Ok(Some(ThreadKind::Main))
+}
+
+fn classify_thread(codex_home: &Path, thread_id: &str) -> DatabaseLookup<ThreadKind> {
+    let Ok(databases) = versioned_database_paths(codex_home, "state_") else {
+        return DatabaseLookup::Unavailable;
+    };
+    let Some(database) = databases.first() else {
+        return DatabaseLookup::Missing;
+    };
+    let Ok(connection) = open_readonly_database(database) else {
+        return DatabaseLookup::Unavailable;
+    };
+    match classify_thread_in_database(&connection, thread_id) {
+        Ok(Some(kind)) => DatabaseLookup::Found(kind),
+        Ok(None) => DatabaseLookup::Missing,
+        Err(_) => DatabaseLookup::Unavailable,
+    }
+}
+
+fn goal_status_in_database(
+    connection: &Connection,
+    thread_id: &str,
+) -> Result<Option<String>, String> {
+    let columns = table_columns(connection, "thread_goals")?;
+    if !columns.contains("thread_id") || !columns.contains("status") {
+        return Ok(None);
+    }
+    connection
+        .query_row(
+            "SELECT status FROM thread_goals WHERE thread_id = ?1 LIMIT 1",
+            [thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map(|status| status.map(|value| value.trim().to_ascii_lowercase()))
+        .map_err(|error| format!("无法读取 Codex 目标状态：{error}"))
+}
+
+fn lookup_goal_status(codex_home: &Path, thread_id: &str) -> DatabaseLookup<String> {
+    let Ok(goal_databases) = versioned_database_paths(codex_home, "goals_") else {
+        return DatabaseLookup::Unavailable;
+    };
+    let database = if let Some(database) = goal_databases.first() {
+        database.clone()
+    } else {
+        let Ok(state_databases) = versioned_database_paths(codex_home, "state_") else {
+            return DatabaseLookup::Unavailable;
+        };
+        let Some(database) = state_databases.first() else {
+            return DatabaseLookup::Missing;
+        };
+        database.clone()
+    };
+    let Ok(connection) = open_readonly_database(&database) else {
+        return DatabaseLookup::Unavailable;
+    };
+    match goal_status_in_database(&connection, thread_id) {
+        Ok(Some(status)) => DatabaseLookup::Found(status),
+        Ok(None) => DatabaseLookup::Missing,
+        Err(_) => DatabaseLookup::Unavailable,
+    }
+}
+
+fn notification_decision(payload_args: &[String], codex_home: &Path) -> NotificationDecision {
+    let Some(payload_argument) = payload_args.first() else {
+        return NotificationDecision::skip("中文动态日志：已忽略缺少事件数据的 Codex 通知");
+    };
+    let Ok(payload) = serde_json::from_str::<CodexNotificationPayload>(payload_argument) else {
+        return NotificationDecision::skip("中文动态日志：已忽略无法识别的 Codex 通知事件");
+    };
+    if payload.event_type != "agent-turn-complete" {
+        return NotificationDecision::skip("中文动态日志：已忽略非任务完成类型的 Codex 通知");
+    }
+    let Some(thread_id) = payload.thread_id.filter(|value| !value.trim().is_empty()) else {
+        return NotificationDecision::skip("中文动态日志：已忽略缺少线程编号的任务完成事件");
+    };
+
+    let mut log_messages = Vec::new();
+    match classify_thread(codex_home, &thread_id) {
+        DatabaseLookup::Found(ThreadKind::Subagent) => {
+            return NotificationDecision::skip("中文动态日志：已忽略子智能体完成事件");
+        }
+        DatabaseLookup::Found(ThreadKind::Main) => {}
+        DatabaseLookup::Missing => log_messages
+            .push("通知过滤兼容回退：状态库中未找到线程，按主任务完成事件处理".to_string()),
+        DatabaseLookup::Unavailable => log_messages
+            .push("通知过滤兼容回退：Codex 状态库暂时不可用，按主任务完成事件处理".to_string()),
+    }
+
+    match lookup_goal_status(codex_home, &thread_id) {
+        DatabaseLookup::Found(status) if status == "complete" => {}
+        DatabaseLookup::Found(status) => {
+            return NotificationDecision::skip(format!(
+                "中文动态日志：主任务尚未完成（目标状态：{status}），已忽略本轮事件"
+            ));
+        }
+        DatabaseLookup::Missing => {}
+        DatabaseLookup::Unavailable => {
+            log_messages.push("通知过滤兼容回退：Codex 目标状态库暂时不可用".to_string())
+        }
+    }
+
+    NotificationDecision::play(log_messages)
+}
+
 fn notification_success_message(play_count: u8) -> String {
     format!("中文动态日志：任务完成，提示音已播放 {play_count} 次")
 }
@@ -1035,6 +1316,13 @@ fn run_notification(payload_args: &[String]) {
         && let Err(error) = run_previous_notifier(previous, payload_args)
     {
         append_log(&error);
+    }
+    let decision = notification_decision(payload_args, &find_codex_home(&settings));
+    for message in decision.log_messages {
+        append_log(&message);
+    }
+    if !decision.should_play {
+        return;
     }
     if !settings.enabled {
         append_log("中文动态日志：任务完成，提示音当前已关闭");
@@ -1175,6 +1463,45 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn notification_payload(event_type: &str, thread_id: Option<&str>) -> Vec<String> {
+        let mut payload = serde_json::json!({ "type": event_type });
+        if let Some(thread_id) = thread_id {
+            payload["thread-id"] = JsonValue::String(thread_id.to_string());
+        }
+        vec![payload.to_string()]
+    }
+
+    fn create_state_database(directory: &Path) -> Connection {
+        let connection = Connection::open(directory.join("state_5.sqlite")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    thread_source TEXT,
+                    source TEXT
+                );
+                CREATE TABLE thread_spawn_edges (
+                    parent_thread_id TEXT NOT NULL,
+                    child_thread_id TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        connection
+    }
+
+    fn create_goals_database(directory: &Path) -> Connection {
+        let connection = Connection::open(directory.join("goals_1.sqlite")).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE thread_goals (
+                    thread_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        connection
+    }
 
     fn manager_command() -> Vec<String> {
         vec![
@@ -1340,6 +1667,169 @@ notify = ["notify-send", "Codex"]
             notification_success_message(2),
             "中文动态日志：任务完成，提示音已播放 2 次"
         );
+    }
+
+    #[test]
+    fn rejects_malformed_or_incomplete_notification_payloads() {
+        let directory = tempfile::tempdir().unwrap();
+        for payload in [
+            Vec::new(),
+            vec!["not-json".to_string()],
+            notification_payload("approval-requested", Some("thread-main")),
+            notification_payload("agent-turn-complete", None),
+        ] {
+            assert!(!notification_decision(&payload, directory.path()).should_play);
+        }
+    }
+
+    #[test]
+    fn allows_main_thread_completion_and_compatibility_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let payload = notification_payload("agent-turn-complete", Some("thread-main"));
+        assert!(notification_decision(&payload, directory.path()).should_play);
+
+        let connection = create_state_database(directory.path());
+        connection
+            .execute(
+                "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'cli', '{}')",
+                ["thread-main"],
+            )
+            .unwrap();
+        drop(connection);
+        assert!(notification_decision(&payload, directory.path()).should_play);
+    }
+
+    #[test]
+    fn rejects_every_supported_subagent_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let connection = create_state_database(directory.path());
+        connection
+            .execute(
+                "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'subagent', '{}')",
+                ["thread-source"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'cli', ?2)",
+                (
+                    "source-json",
+                    r#"{"subagent":{"thread_spawn":{"depth":1}}}"#,
+                ),
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id) VALUES (?1, ?2)",
+                ("thread-parent", "spawn-child"),
+            )
+            .unwrap();
+        drop(connection);
+
+        for thread_id in ["thread-source", "source-json", "spawn-child"] {
+            let payload = notification_payload("agent-turn-complete", Some(thread_id));
+            assert!(!notification_decision(&payload, directory.path()).should_play);
+        }
+    }
+
+    #[test]
+    fn only_allows_completed_goal_notifications() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = create_state_database(directory.path());
+        let goals = create_goals_database(directory.path());
+        for (thread_id, status) in [
+            ("goal-active", "active"),
+            ("goal-paused", "paused"),
+            ("goal-blocked", "blocked"),
+            ("goal-usage", "usage_limited"),
+            ("goal-budget", "budget_limited"),
+            ("goal-complete", "complete"),
+        ] {
+            state
+                .execute(
+                    "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'cli', '{}')",
+                    [thread_id],
+                )
+                .unwrap();
+            goals
+                .execute(
+                    "INSERT INTO thread_goals (thread_id, status) VALUES (?1, ?2)",
+                    (thread_id, status),
+                )
+                .unwrap();
+        }
+        drop(state);
+        drop(goals);
+
+        for thread_id in [
+            "goal-active",
+            "goal-paused",
+            "goal-blocked",
+            "goal-usage",
+            "goal-budget",
+        ] {
+            let payload = notification_payload("agent-turn-complete", Some(thread_id));
+            assert!(!notification_decision(&payload, directory.path()).should_play);
+        }
+        let complete = notification_payload("agent-turn-complete", Some("goal-complete"));
+        assert!(notification_decision(&complete, directory.path()).should_play);
+    }
+
+    #[test]
+    fn ignores_stale_older_database_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let current_state = create_state_database(directory.path());
+        current_state
+            .execute(
+                "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'cli', '{}')",
+                ["current-main"],
+            )
+            .unwrap();
+        drop(current_state);
+
+        let stale_state = Connection::open(directory.path().join("state_4.sqlite")).unwrap();
+        stale_state
+            .execute_batch(
+                "CREATE TABLE threads (
+                    id TEXT PRIMARY KEY,
+                    thread_source TEXT,
+                    source TEXT
+                );
+                CREATE TABLE thread_spawn_edges (
+                    parent_thread_id TEXT NOT NULL,
+                    child_thread_id TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        stale_state
+            .execute(
+                "INSERT INTO threads (id, thread_source, source) VALUES (?1, 'subagent', '{}')",
+                ["current-main"],
+            )
+            .unwrap();
+        drop(stale_state);
+
+        let stale_goals = create_goals_database(directory.path());
+        stale_goals
+            .execute(
+                "INSERT INTO thread_goals (thread_id, status) VALUES (?1, 'active')",
+                ["current-main"],
+            )
+            .unwrap();
+        drop(stale_goals);
+        let current_goals = Connection::open(directory.path().join("goals_2.sqlite")).unwrap();
+        current_goals
+            .execute_batch(
+                "CREATE TABLE thread_goals (
+                    thread_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+        drop(current_goals);
+
+        let payload = notification_payload("agent-turn-complete", Some("current-main"));
+        assert!(notification_decision(&payload, directory.path()).should_play);
     }
 
     #[test]
